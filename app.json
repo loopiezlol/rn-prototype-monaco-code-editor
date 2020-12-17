@@ -1,0 +1,12 @@
+{
+  "name": "proto",
+  "displayName": "proto",
+  "expo": {
+    "name": "proto",
+    "slug": "proto",
+    "version": "1.0.0",
+    "assetBundlePatterns": [
+      "**/*"
+    ]
+  }
+}
