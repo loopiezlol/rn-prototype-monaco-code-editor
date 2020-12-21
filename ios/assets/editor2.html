@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+    <meta name="viewport"
+    content="width=device-width,initial-scale=1,maximum-scale=1"
+  </head>
+  <body>
+    <div
+      id="container"
+      style="width: 100vw; height: 100vh; border: 1px solid grey"
+    ></div>
+
+    <script src="./monaco-editor/min/vs/loader.js"></script>
+    <script>
+      require.config({ paths: { vs: "./monaco-editor/min/vs" } });
+      require(["vs/editor/editor.main"], function () {
+        let editor = monaco.editor.create(
+          document.getElementById("container"),
+          {
+            value: `function x() {
+        console.log("Hello world!");
+      }`,
+            language: "javascript",
+            theme: "vs-dark",
+            automaticLayout: true,
+            fontSize: "18px",
+          }
+        );
+        window.editor = editor;
+        window.monaco = monaco;
+
+        window.extractCode = function () {
+          window.ReactNativeWebView.postMessage(
+            JSON.stringify({
+              type: "extract",
+              value: window.editor.getValue(),
+            })
+          );
+        };
+      });
+    </script>
+  </body>
+</html>
