@@ -6,7 +6,8 @@ import {
   View,
   ActivityIndicator,
   Button,
-  Alert
+  Alert,
+  SafeAreaView,
 } from "react-native";
 import { WebView } from "react-native-webview";
 
@@ -51,42 +52,29 @@ export default function App() {
   };
 
   return (
-    <View style={[styles.container]}>
-      <View style={{ flexDirection: "row" }}>
-        <Button onPress={changeEditorCodeJS} title="js code" />
-        <Button onPress={changeEditorCodePython} title="python code" />
-        <Button onPress={extractCode} title="extract code" />
-      </View>
-      <View
-        style={{
-          position: "absolute",
-          display: "flex",
-          width: "100%",
-          justifyContent: "center",
-          alignContent: "center",
-          zIndex: 2,
-        }}
-      >
-        {isLoading && <ActivityIndicator size="large" />}
-      </View>
-      <WebView
-        originWhitelist={["*", "file://"]}
-        ref={(r) => {
-          this.webviewBridge = r;
-        }}
-        source={{
-          uri: "./assets/editor2.html",
-          baseUrl: "./assets/monaco-editor",
-        }}
-        onLoad={() => setIsLoading(false)}
-        scrollEnabled={false}
-        hideKeyboardAccessoryView={true}
-        onMessage={(event) => {
-          console.log(JSON.parse(event.nativeEvent.data).value);
-          Alert.alert('code extracted', JSON.parse(event.nativeEvent.data).value)
-        }}
-      />
-    </View>
+      <SafeAreaView style={[styles.container]}>
+        <WebView
+          style={{margin: 0, padding: 0, flex: 1}}
+          originWhitelist={["*", "file://"]}
+          ref={(r) => {
+            this.webviewBridge = r;
+          }}
+          source={{
+            uri: "./assets/editor-local.html",
+            baseUrl: "./assets/monaco-editor",
+          }}
+          onLoad={() => setIsLoading(false)}
+          scrollEnabled={false}
+          hideKeyboardAccessoryView={true}
+          onMessage={(event) => {
+            console.log(JSON.parse(event.nativeEvent.data).value);
+            Alert.alert(
+              "code extracted",
+              JSON.parse(event.nativeEvent.data).value
+            );
+          }}
+        />
+      </SafeAreaView>
   );
 }
 
@@ -95,8 +83,6 @@ const styles = StyleSheet.create({
     flex: 1,
     height: "100%",
     width: "100%",
-    paddingVertical: "10%",
-    paddingHorizontal: "2%",
     justifyContent: "center",
   },
 });
