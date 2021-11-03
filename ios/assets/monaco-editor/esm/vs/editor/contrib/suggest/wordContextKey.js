@@ -11,25 +11,24 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __param = (this && this.__param) || function (paramIndex, decorator) {
     return function (target, key) { decorator(target, key, paramIndex); }
 };
-import { RawContextKey, IContextKeyService } from '../../../platform/contextkey/common/contextkey.js';
-import { dispose, Disposable } from '../../../base/common/lifecycle.js';
-let WordContextKey = class WordContextKey extends Disposable {
+import { IContextKeyService, RawContextKey } from '../../../platform/contextkey/common/contextkey.js';
+let WordContextKey = class WordContextKey {
     constructor(_editor, contextKeyService) {
-        super();
         this._editor = _editor;
         this._enabled = false;
         this._ckAtEnd = WordContextKey.AtEnd.bindTo(contextKeyService);
-        this._register(this._editor.onDidChangeConfiguration(e => e.hasChanged(101 /* tabCompletion */) && this._update()));
+        this._configListener = this._editor.onDidChangeConfiguration(e => e.hasChanged(110 /* tabCompletion */) && this._update());
         this._update();
     }
     dispose() {
-        super.dispose();
-        dispose(this._selectionListener);
+        var _a;
+        this._configListener.dispose();
+        (_a = this._selectionListener) === null || _a === void 0 ? void 0 : _a.dispose();
         this._ckAtEnd.reset();
     }
     _update() {
         // only update this when tab completions are enabled
-        const enabled = this._editor.getOption(101 /* tabCompletion */) === 'on';
+        const enabled = this._editor.getOption(110 /* tabCompletion */) === 'on';
         if (this._enabled === enabled) {
             return;
         }

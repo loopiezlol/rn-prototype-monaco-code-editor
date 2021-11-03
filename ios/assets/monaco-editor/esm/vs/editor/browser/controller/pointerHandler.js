@@ -9,86 +9,7 @@ import { Disposable } from '../../../base/common/lifecycle.js';
 import { MouseHandler, createMouseMoveEventMerger } from './mouseHandler.js';
 import { EditorMouseEvent, EditorPointerEventFactory } from '../editorDom.js';
 import { BrowserFeatures } from '../../../base/browser/canIUse.js';
-function gestureChangeEventMerger(lastEvent, currentEvent) {
-    const r = {
-        translationY: currentEvent.translationY,
-        translationX: currentEvent.translationX
-    };
-    if (lastEvent) {
-        r.translationY += lastEvent.translationY;
-        r.translationX += lastEvent.translationX;
-    }
-    return r;
-}
-/**
- * Basically Edge but should be modified to handle any pointerEnabled, even without support of MSGesture
- */
-class StandardPointerHandler extends MouseHandler {
-    constructor(context, viewController, viewHelper) {
-        super(context, viewController, viewHelper);
-        this.viewHelper.linesContentDomNode.style.touchAction = 'none';
-        // TODO@Alex -> this expects that the view is added in 100 ms, might not be the case
-        // This handler should be added when the dom node is in the dom tree
-        this._installGestureHandlerTimeout = window.setTimeout(() => {
-            this._installGestureHandlerTimeout = -1;
-            // TODO@Alex: replace the usage of MSGesture here with something that works across all browsers
-            if (window.MSGesture) {
-                const touchGesture = new MSGesture();
-                const penGesture = new MSGesture();
-                touchGesture.target = this.viewHelper.linesContentDomNode;
-                penGesture.target = this.viewHelper.linesContentDomNode;
-                this.viewHelper.linesContentDomNode.addEventListener('pointerdown', (e) => {
-                    const pointerType = e.pointerType;
-                    if (pointerType === 'mouse') {
-                        this._lastPointerType = 'mouse';
-                        return;
-                    }
-                    else if (pointerType === 'touch') {
-                        this._lastPointerType = 'touch';
-                        touchGesture.addPointer(e.pointerId);
-                    }
-                    else {
-                        this._lastPointerType = 'pen';
-                        penGesture.addPointer(e.pointerId);
-                    }
-                });
-                this._register(dom.addDisposableThrottledListener(this.viewHelper.linesContentDomNode, 'MSGestureChange', (e) => this._onGestureChange(e), gestureChangeEventMerger));
-                this._register(dom.addDisposableListener(this.viewHelper.linesContentDomNode, 'MSGestureTap', (e) => this._onCaptureGestureTap(e), true));
-            }
-        }, 100);
-        this._lastPointerType = 'mouse';
-    }
-    _onMouseDown(e) {
-        if (this._lastPointerType === 'mouse') {
-            super._onMouseDown(e);
-        }
-    }
-    _onCaptureGestureTap(rawEvent) {
-        const e = new EditorMouseEvent(rawEvent, this.viewHelper.viewDomNode);
-        const t = this._createMouseTarget(e, false);
-        if (t.position) {
-            this.viewController.moveTo(t.position);
-        }
-        // IE does not want to focus when coming in from the browser's address bar
-        if (e.browserEvent.fromElement) {
-            e.preventDefault();
-            this.viewHelper.focusTextArea();
-        }
-        else {
-            // TODO@Alex -> cancel this is focus is lost
-            setTimeout(() => {
-                this.viewHelper.focusTextArea();
-            });
-        }
-    }
-    _onGestureChange(e) {
-        this._context.model.deltaScrollNow(-e.translationX, -e.translationY);
-    }
-    dispose() {
-        window.clearTimeout(this._installGestureHandlerTimeout);
-        super.dispose();
-    }
-}
+import { TextAreaSyntethicEvents } from './textAreaInput.js';
 /**
  * Currently only tested on iOS 13/ iPadOS.
  */
@@ -150,7 +71,7 @@ export class PointerEventHandler extends MouseHandler {
         }
     }
     _onMouseDown(e) {
-        if (e.target && this.viewHelper.linesContentDomNode.contains(e.target) && this._lastPointerType === 'touch') {
+        if (e.browserEvent.pointerType === 'touch') {
             return;
         }
         super._onMouseDown(e);
@@ -169,6 +90,10 @@ class TouchHandler extends MouseHandler {
         this.viewHelper.focusTextArea();
         const target = this._createMouseTarget(new EditorMouseEvent(event, this.viewHelper.viewDomNode), false);
         if (target.position) {
+            // Send the tap event also to the <textarea> (for input purposes)
+            const event = document.createEvent('CustomEvent');
+            event.initEvent(TextAreaSyntethicEvents.Tap, false, true);
+            this.viewHelper.dispatchTextAreaEvent(event);
             this.viewController.moveTo(target.position);
         }
     }
@@ -184,9 +109,6 @@ export class PointerHandler extends Disposable {
         }
         else if (window.TouchEvent) {
             this.handler = this._register(new TouchHandler(context, viewController, viewHelper));
-        }
-        else if (window.navigator.pointerEnabled || window.PointerEvent) {
-            this.handler = this._register(new StandardPointerHandler(context, viewController, viewHelper));
         }
         else {
             this.handler = this._register(new MouseHandler(context, viewController, viewHelper));

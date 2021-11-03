@@ -22,6 +22,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 import { isNonEmptyArray } from '../../../base/common/arrays.js';
 import { CancellationToken } from '../../../base/common/cancellation.js';
+import { onUnexpectedError } from '../../../base/common/errors.js';
 import { KeyChord } from '../../../base/common/keyCodes.js';
 import { DisposableStore } from '../../../base/common/lifecycle.js';
 import { EditorAction, registerEditorAction, registerEditorContribution } from '../../browser/editorExtensions.js';
@@ -31,14 +32,13 @@ import { Range } from '../../common/core/range.js';
 import { EditorContextKeys } from '../../common/editorContextKeys.js';
 import { DocumentRangeFormattingEditProviderRegistry, OnTypeFormattingEditProviderRegistry } from '../../common/modes.js';
 import { IEditorWorkerService } from '../../common/services/editorWorkerService.js';
-import { getOnTypeFormattingEdits, alertFormattingEdits, formatDocumentRangesWithSelectedProvider, formatDocumentWithSelectedProvider } from './format.js';
+import { alertFormattingEdits, formatDocumentRangesWithSelectedProvider, formatDocumentWithSelectedProvider, getOnTypeFormattingEdits } from './format.js';
 import { FormattingEdit } from './formattingEdit.js';
 import * as nls from '../../../nls.js';
 import { CommandsRegistry, ICommandService } from '../../../platform/commands/common/commands.js';
 import { ContextKeyExpr } from '../../../platform/contextkey/common/contextkey.js';
 import { IInstantiationService } from '../../../platform/instantiation/common/instantiation.js';
-import { onUnexpectedError } from '../../../base/common/errors.js';
-import { Progress, IEditorProgressService } from '../../../platform/progress/common/progress.js';
+import { IEditorProgressService, Progress } from '../../../platform/progress/common/progress.js';
 let FormatOnType = class FormatOnType {
     constructor(editor, _workerService) {
         this._workerService = _workerService;
@@ -58,7 +58,7 @@ let FormatOnType = class FormatOnType {
         // clean up
         this._callOnModel.clear();
         // we are disabled
-        if (!this._editor.getOption(41 /* formatOnType */)) {
+        if (!this._editor.getOption(48 /* formatOnType */)) {
             return;
         }
         // no model
@@ -152,7 +152,7 @@ let FormatOnPaste = class FormatOnPaste {
         // clean up
         this._callOnModel.clear();
         // we are disabled
-        if (!this.editor.getOption(40 /* formatOnPaste */)) {
+        if (!this.editor.getOption(47 /* formatOnPaste */)) {
             return;
         }
         // no model
@@ -187,13 +187,12 @@ class FormatDocumentAction extends EditorAction {
             alias: 'Format Document',
             precondition: ContextKeyExpr.and(EditorContextKeys.notInCompositeEditor, EditorContextKeys.writable, EditorContextKeys.hasDocumentFormattingProvider),
             kbOpts: {
-                kbExpr: ContextKeyExpr.and(EditorContextKeys.editorTextFocus, EditorContextKeys.hasDocumentFormattingProvider),
+                kbExpr: EditorContextKeys.editorTextFocus,
                 primary: 1024 /* Shift */ | 512 /* Alt */ | 36 /* KEY_F */,
                 linux: { primary: 2048 /* CtrlCmd */ | 1024 /* Shift */ | 39 /* KEY_I */ },
                 weight: 100 /* EditorContrib */
             },
             contextMenuOpts: {
-                when: EditorContextKeys.hasDocumentFormattingProvider,
                 group: '1_modification',
                 order: 1.3
             }
@@ -217,12 +216,12 @@ class FormatSelectionAction extends EditorAction {
             alias: 'Format Selection',
             precondition: ContextKeyExpr.and(EditorContextKeys.writable, EditorContextKeys.hasDocumentSelectionFormattingProvider),
             kbOpts: {
-                kbExpr: ContextKeyExpr.and(EditorContextKeys.editorTextFocus, EditorContextKeys.hasDocumentSelectionFormattingProvider),
+                kbExpr: EditorContextKeys.editorTextFocus,
                 primary: KeyChord(2048 /* CtrlCmd */ | 41 /* KEY_K */, 2048 /* CtrlCmd */ | 36 /* KEY_F */),
                 weight: 100 /* EditorContrib */
             },
             contextMenuOpts: {
-                when: ContextKeyExpr.and(EditorContextKeys.hasDocumentSelectionFormattingProvider, EditorContextKeys.hasNonEmptySelection),
+                when: EditorContextKeys.hasNonEmptySelection,
                 group: '1_modification',
                 order: 1.31
             }

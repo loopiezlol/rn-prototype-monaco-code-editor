@@ -2,7 +2,8 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-import { fuzzyScore, fuzzyScoreGracefulAggressive, FuzzyScore, anyScore } from '../../../base/common/filters.js';
+import { quickSelect } from '../../../base/common/arrays.js';
+import { anyScore, fuzzyScore, FuzzyScore, fuzzyScoreGracefulAggressive } from '../../../base/common/filters.js';
 import { compareIgnoreCase } from '../../../base/common/strings.js';
 export class LineContext {
     constructor(leadingLineContent, characterCountDelta) {
@@ -46,11 +47,17 @@ export class CompletionModel {
     }
     get allProvider() {
         this._ensureCachedState();
-        return this._allProvider;
+        return this._providerInfo.keys();
     }
     get incomplete() {
         this._ensureCachedState();
-        return this._isIncomplete;
+        const result = new Set();
+        for (let [provider, incomplete] of this._providerInfo) {
+            if (incomplete) {
+                result.add(provider);
+            }
+        }
+        return result;
     }
     adopt(except) {
         let res = [];
@@ -79,9 +86,8 @@ export class CompletionModel {
         }
     }
     _createCachedState() {
-        this._isIncomplete = new Set();
-        this._allProvider = new Set();
-        this._stats = { suggestionCount: 0, snippetCount: 0, textCount: 0 };
+        this._providerInfo = new Map();
+        const labelLengths = [];
         const { leadingLineContent, characterCountDelta } = this._lineContext;
         let word = '';
         let wordLow = '';
@@ -97,12 +103,8 @@ export class CompletionModel {
             if (item.isInvalid) {
                 continue; // SKIP invalid items
             }
-            // collect those supports that signaled having
-            // an incomplete result
-            if (item.container.incomplete) {
-                this._isIncomplete.add(item.provider);
-            }
-            this._allProvider.add(item.provider);
+            // collect all support, know if their result is incomplete
+            this._providerInfo.set(item.provider, Boolean(item.container.incomplete));
             // 'word' is that remainder of the current line that we
             // filter and score against. In theory each suggestion uses a
             // different word, but in practice not - that's why we cache
@@ -136,7 +138,6 @@ export class CompletionModel {
                         break;
                     }
                 }
-                const textLabel = typeof item.completion.label === 'string' ? item.completion.label : item.completion.label.name;
                 if (wordPos >= wordLen) {
                     // the wordPos at which scoring starts is the whole word
                     // and therefore the same rules as not having a word apply
@@ -151,20 +152,20 @@ export class CompletionModel {
                     if (!match) {
                         continue; // NO match
                     }
-                    if (compareIgnoreCase(item.completion.filterText, textLabel) === 0) {
+                    if (compareIgnoreCase(item.completion.filterText, item.textLabel) === 0) {
                         // filterText and label are actually the same -> use good highlights
                         item.score = match;
                     }
                     else {
                         // re-run the scorer on the label in the hope of a result BUT use the rank
                         // of the filterText-match
-                        item.score = anyScore(word, wordLow, wordPos, textLabel, item.labelLow, 0);
+                        item.score = anyScore(word, wordLow, wordPos, item.textLabel, item.labelLow, 0);
                         item.score[0] = match[0]; // use score from filterText
                     }
                 }
                 else {
                     // by default match `word` against the `label`
-                    let match = scoreFn(word, wordLow, wordPos, textLabel, item.labelLow, 0, false);
+                    let match = scoreFn(word, wordLow, wordPos, item.textLabel, item.labelLow, 0, false);
                     if (!match) {
                         continue; // NO match
                     }
@@ -175,18 +176,15 @@ export class CompletionModel {
             item.distance = this._wordDistance.distance(item.position, item.completion);
             target.push(item);
             // update stats
-            this._stats.suggestionCount++;
-            switch (item.completion.kind) {
-                case 27 /* Snippet */:
-                    this._stats.snippetCount++;
-                    break;
-                case 18 /* Text */:
-                    this._stats.textCount++;
-                    break;
-            }
+            labelLengths.push(item.textLabel.length);
         }
         this._filteredItems = target.sort(this._snippetCompareFn);
         this._refilterKind = 0 /* Nothing */;
+        this._stats = {
+            pLabelLen: labelLengths.length ?
+                quickSelect(labelLengths.length - .85, labelLengths, (a, b) => a - b)
+                : 0
+        };
     }
     static _compareCompletionItems(a, b) {
         if (a.score[0] > b.score[0]) {

@@ -16,7 +16,6 @@ export var conf = {
         { open: '[', close: ']' },
         { open: '{', close: '}' },
         { open: '(', close: ')' },
-        { open: "'", close: "'", notIn: ['string', 'comment'] },
         { open: '"', close: '"', notIn: ['string'] }
     ],
     surroundingPairs: [
@@ -38,11 +37,14 @@ export var language = {
     defaultToken: 'invalid',
     keywords: [
         'as',
+        'async',
+        'await',
         'box',
         'break',
         'const',
         'continue',
         'crate',
+        'dyn',
         'else',
         'enum',
         'extern',
@@ -67,6 +69,7 @@ export var language = {
         'super',
         'trait',
         'true',
+        'try',
         'type',
         'unsafe',
         'use',

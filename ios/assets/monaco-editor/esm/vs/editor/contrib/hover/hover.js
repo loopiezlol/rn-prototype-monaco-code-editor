@@ -11,63 +11,47 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __param = (this && this.__param) || function (paramIndex, decorator) {
     return function (target, key) { decorator(target, key, paramIndex); }
 };
-import * as nls from '../../../nls.js';
 import { KeyChord } from '../../../base/common/keyCodes.js';
-import { DisposableStore, MutableDisposable } from '../../../base/common/lifecycle.js';
+import { DisposableStore } from '../../../base/common/lifecycle.js';
 import { EditorAction, registerEditorAction, registerEditorContribution } from '../../browser/editorExtensions.js';
 import { Range } from '../../common/core/range.js';
 import { EditorContextKeys } from '../../common/editorContextKeys.js';
 import { IModeService } from '../../common/services/modeService.js';
+import { GotoDefinitionAtPositionEditorContribution } from '../gotoSymbol/link/goToDefinitionAtPosition.js';
 import { ModesContentHoverWidget } from './modesContentHover.js';
 import { ModesGlyphHoverWidget } from './modesGlyphHover.js';
-import { IOpenerService } from '../../../platform/opener/common/opener.js';
-import { editorHoverBackground, editorHoverBorder, editorHoverHighlight, textCodeBlockBackground, textLinkForeground, editorHoverStatusBarBackground, editorHoverForeground } from '../../../platform/theme/common/colorRegistry.js';
-import { IThemeService, registerThemingParticipant } from '../../../platform/theme/common/themeService.js';
-import { IMarkerDecorationsService } from '../../common/services/markersDecorationService.js';
-import { IKeybindingService } from '../../../platform/keybinding/common/keybinding.js';
-import { GotoDefinitionAtPositionEditorContribution } from '../gotoSymbol/link/goToDefinitionAtPosition.js';
+import * as nls from '../../../nls.js';
 import { IContextKeyService } from '../../../platform/contextkey/common/contextkey.js';
+import { IInstantiationService } from '../../../platform/instantiation/common/instantiation.js';
+import { IOpenerService } from '../../../platform/opener/common/opener.js';
+import { editorHoverBackground, editorHoverBorder, editorHoverForeground, editorHoverHighlight, editorHoverStatusBarBackground, textCodeBlockBackground, textLinkActiveForeground, textLinkForeground } from '../../../platform/theme/common/colorRegistry.js';
+import { registerThemingParticipant } from '../../../platform/theme/common/themeService.js';
 let ModesHoverController = class ModesHoverController {
-    constructor(_editor, _openerService, _modeService, _markerDecorationsService, _keybindingService, _themeService, _contextKeyService) {
+    constructor(_editor, _instantiationService, _openerService, _modeService, _contextKeyService) {
         this._editor = _editor;
+        this._instantiationService = _instantiationService;
         this._openerService = _openerService;
         this._modeService = _modeService;
-        this._markerDecorationsService = _markerDecorationsService;
-        this._keybindingService = _keybindingService;
-        this._themeService = _themeService;
         this._toUnhook = new DisposableStore();
-        this._contentWidget = new MutableDisposable();
-        this._glyphWidget = new MutableDisposable();
         this._isMouseDown = false;
         this._hoverClicked = false;
+        this._contentWidget = null;
+        this._glyphWidget = null;
         this._hookEvents();
         this._didChangeConfigurationHandler = this._editor.onDidChangeConfiguration((e) => {
-            if (e.hasChanged(46 /* hover */)) {
-                this._hideWidgets();
+            if (e.hasChanged(52 /* hover */)) {
                 this._unhookEvents();
                 this._hookEvents();
             }
         });
         this._hoverVisibleKey = EditorContextKeys.hoverVisible.bindTo(_contextKeyService);
     }
-    get contentWidget() {
-        if (!this._contentWidget.value) {
-            this._createHoverWidgets();
-        }
-        return this._contentWidget.value;
-    }
-    get glyphWidget() {
-        if (!this._glyphWidget.value) {
-            this._createHoverWidgets();
-        }
-        return this._glyphWidget.value;
-    }
     static get(editor) {
         return editor.getContribution(ModesHoverController.ID);
     }
     _hookEvents() {
         const hideWidgetsEventHandler = () => this._hideWidgets();
-        const hoverOpts = this._editor.getOption(46 /* hover */);
+        const hoverOpts = this._editor.getOption(52 /* hover */);
         this._isHoverEnabled = hoverOpts.enabled;
         this._isHoverSticky = hoverOpts.sticky;
         if (this._isHoverEnabled) {
@@ -78,7 +62,7 @@ let ModesHoverController = class ModesHoverController {
             this._toUnhook.add(this._editor.onDidChangeModelDecorations(() => this._onModelDecorationsChanged()));
         }
         else {
-            this._toUnhook.add(this._editor.onMouseMove(hideWidgetsEventHandler));
+            this._toUnhook.add(this._editor.onMouseMove((e) => this._onEditorMouseMove(e)));
             this._toUnhook.add(this._editor.onKeyDown((e) => this._onKeyDown(e)));
         }
         this._toUnhook.add(this._editor.onMouseLeave(hideWidgetsEventHandler));
@@ -89,8 +73,9 @@ let ModesHoverController = class ModesHoverController {
         this._toUnhook.clear();
     }
     _onModelDecorationsChanged() {
-        this.contentWidget.onModelDecorationsChanged();
-        this.glyphWidget.onModelDecorationsChanged();
+        var _a, _b;
+        (_a = this._contentWidget) === null || _a === void 0 ? void 0 : _a.onModelDecorationsChanged();
+        (_b = this._glyphWidget) === null || _b === void 0 ? void 0 : _b.onModelDecorationsChanged();
     }
     _onEditorScrollChanged(e) {
         if (e.scrollTopChanged || e.scrollLeftChanged) {
@@ -118,41 +103,46 @@ let ModesHoverController = class ModesHoverController {
         this._isMouseDown = false;
     }
     _onEditorMouseMove(mouseEvent) {
+        var _a, _b, _c, _d, _e;
         let targetType = mouseEvent.target.type;
-        if (this._isMouseDown && this._hoverClicked && this.contentWidget.isColorPickerVisible()) {
+        if (this._isMouseDown && this._hoverClicked) {
             return;
         }
         if (this._isHoverSticky && targetType === 9 /* CONTENT_WIDGET */ && mouseEvent.target.detail === ModesContentHoverWidget.ID) {
             // mouse moved on top of content hover widget
             return;
         }
+        if (this._isHoverSticky && !((_b = (_a = mouseEvent.event.browserEvent.view) === null || _a === void 0 ? void 0 : _a.getSelection()) === null || _b === void 0 ? void 0 : _b.isCollapsed)) {
+            // selected text within content hover widget
+            return;
+        }
+        if (!this._isHoverSticky && targetType === 9 /* CONTENT_WIDGET */ && mouseEvent.target.detail === ModesContentHoverWidget.ID
+            && ((_c = this._contentWidget) === null || _c === void 0 ? void 0 : _c.isColorPickerVisible())) {
+            // though the hover is not sticky, the color picker needs to.
+            return;
+        }
         if (this._isHoverSticky && targetType === 12 /* OVERLAY_WIDGET */ && mouseEvent.target.detail === ModesGlyphHoverWidget.ID) {
             // mouse moved on top of overlay hover widget
             return;
         }
-        if (targetType === 7 /* CONTENT_EMPTY */) {
-            const epsilon = this._editor.getOption(36 /* fontInfo */).typicalHalfwidthCharacterWidth / 2;
-            const data = mouseEvent.target.detail;
-            if (data && !data.isAfterLines && typeof data.horizontalDistanceToText === 'number' && data.horizontalDistanceToText < epsilon) {
-                // Let hover kick in even when the mouse is technically in the empty area after a line, given the distance is small enough
-                targetType = 6 /* CONTENT_TEXT */;
-            }
-        }
-        if (targetType === 6 /* CONTENT_TEXT */) {
-            this.glyphWidget.hide();
-            if (this._isHoverEnabled && mouseEvent.target.range) {
-                this.contentWidget.startShowingAt(mouseEvent.target.range, 0 /* Delayed */, false);
-            }
-        }
-        else if (targetType === 2 /* GUTTER_GLYPH_MARGIN */) {
-            this.contentWidget.hide();
-            if (this._isHoverEnabled && mouseEvent.target.position) {
-                this.glyphWidget.startShowingAt(mouseEvent.target.position.lineNumber);
-            }
-        }
-        else {
+        if (!this._isHoverEnabled) {
             this._hideWidgets();
+            return;
         }
+        const contentWidget = this._getOrCreateContentWidget();
+        if (contentWidget.maybeShowAt(mouseEvent)) {
+            (_d = this._glyphWidget) === null || _d === void 0 ? void 0 : _d.hide();
+            return;
+        }
+        if (targetType === 2 /* GUTTER_GLYPH_MARGIN */ && mouseEvent.target.position) {
+            (_e = this._contentWidget) === null || _e === void 0 ? void 0 : _e.hide();
+            if (!this._glyphWidget) {
+                this._glyphWidget = new ModesGlyphHoverWidget(this._editor, this._modeService, this._openerService);
+            }
+            this._glyphWidget.startShowingAt(mouseEvent.target.position.lineNumber);
+            return;
+        }
+        this._hideWidgets();
     }
     _onKeyDown(e) {
         if (e.keyCode !== 5 /* Ctrl */ && e.keyCode !== 6 /* Alt */ && e.keyCode !== 57 /* Meta */ && e.keyCode !== 4 /* Shift */) {
@@ -161,35 +151,42 @@ let ModesHoverController = class ModesHoverController {
         }
     }
     _hideWidgets() {
-        if (!this._glyphWidget.value || !this._contentWidget.value || (this._isMouseDown && this._hoverClicked && this._contentWidget.value.isColorPickerVisible())) {
+        var _a, _b, _c;
+        if ((this._isMouseDown && this._hoverClicked && ((_a = this._contentWidget) === null || _a === void 0 ? void 0 : _a.isColorPickerVisible()))) {
             return;
         }
-        this._glyphWidget.value.hide();
-        this._contentWidget.value.hide();
+        this._hoverClicked = false;
+        (_b = this._glyphWidget) === null || _b === void 0 ? void 0 : _b.hide();
+        (_c = this._contentWidget) === null || _c === void 0 ? void 0 : _c.hide();
     }
-    _createHoverWidgets() {
-        this._contentWidget.value = new ModesContentHoverWidget(this._editor, this._hoverVisibleKey, this._markerDecorationsService, this._keybindingService, this._themeService, this._modeService, this._openerService);
-        this._glyphWidget.value = new ModesGlyphHoverWidget(this._editor, this._modeService, this._openerService);
+    _getOrCreateContentWidget() {
+        if (!this._contentWidget) {
+            this._contentWidget = this._instantiationService.createInstance(ModesContentHoverWidget, this._editor, this._hoverVisibleKey);
+        }
+        return this._contentWidget;
+    }
+    isColorPickerVisible() {
+        var _a;
+        return ((_a = this._contentWidget) === null || _a === void 0 ? void 0 : _a.isColorPickerVisible()) || false;
     }
     showContentHover(range, mode, focus) {
-        this.contentWidget.startShowingAt(range, mode, focus);
+        this._getOrCreateContentWidget().startShowingAtRange(range, mode, focus);
     }
     dispose() {
+        var _a, _b;
         this._unhookEvents();
         this._toUnhook.dispose();
         this._didChangeConfigurationHandler.dispose();
-        this._glyphWidget.dispose();
-        this._contentWidget.dispose();
+        (_a = this._glyphWidget) === null || _a === void 0 ? void 0 : _a.dispose();
+        (_b = this._contentWidget) === null || _b === void 0 ? void 0 : _b.dispose();
     }
 };
 ModesHoverController.ID = 'editor.contrib.hover';
 ModesHoverController = __decorate([
-    __param(1, IOpenerService),
-    __param(2, IModeService),
-    __param(3, IMarkerDecorationsService),
-    __param(4, IKeybindingService),
-    __param(5, IThemeService),
-    __param(6, IContextKeyService)
+    __param(1, IInstantiationService),
+    __param(2, IOpenerService),
+    __param(3, IModeService),
+    __param(4, IContextKeyService)
 ], ModesHoverController);
 export { ModesHoverController };
 class ShowHoverAction extends EditorAction {
@@ -253,14 +250,9 @@ class ShowDefinitionPreviewHoverAction extends EditorAction {
         const range = new Range(position.lineNumber, position.column, position.lineNumber, position.column);
         const goto = GotoDefinitionAtPositionEditorContribution.get(editor);
         const promise = goto.startFindDefinitionFromCursor(position);
-        if (promise) {
-            promise.then(() => {
-                controller.showContentHover(range, 1 /* Immediate */, true);
-            });
-        }
-        else {
+        promise.then(() => {
             controller.showContentHover(range, 1 /* Immediate */, true);
-        }
+        });
     }
 }
 registerEditorContribution(ModesHoverController.ID, ModesHoverController);
@@ -286,6 +278,10 @@ registerThemingParticipant((theme, collector) => {
     const link = theme.getColor(textLinkForeground);
     if (link) {
         collector.addRule(`.monaco-editor .monaco-hover a { color: ${link}; }`);
+    }
+    const linkHover = theme.getColor(textLinkActiveForeground);
+    if (linkHover) {
+        collector.addRule(`.monaco-editor .monaco-hover a:hover { color: ${linkHover}; }`);
     }
     const hoverForeground = theme.getColor(editorHoverForeground);
     if (hoverForeground) {

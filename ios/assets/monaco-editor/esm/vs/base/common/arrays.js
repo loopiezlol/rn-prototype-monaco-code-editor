@@ -67,57 +67,41 @@ export function findFirstInSorted(array, p) {
     }
     return low;
 }
-/**
- * Like `Array#sort` but always stable. Usually runs a little slower `than Array#sort`
- * so only use this when actually needing stable sort.
- */
-export function mergeSort(data, compare) {
-    _sort(data, compare, 0, data.length - 1, []);
-    return data;
-}
-function _merge(a, compare, lo, mid, hi, aux) {
-    let leftIdx = lo, rightIdx = mid + 1;
-    for (let i = lo; i <= hi; i++) {
-        aux[i] = a[i];
+export function quickSelect(nth, data, compare) {
+    nth = nth | 0;
+    if (nth >= data.length) {
+        throw new TypeError('invalid index');
     }
-    for (let i = lo; i <= hi; i++) {
-        if (leftIdx > mid) {
-            // left side consumed
-            a[i] = aux[rightIdx++];
+    let pivotValue = data[Math.floor(data.length * Math.random())];
+    let lower = [];
+    let higher = [];
+    let pivots = [];
+    for (let value of data) {
+        const val = compare(value, pivotValue);
+        if (val < 0) {
+            lower.push(value);
         }
-        else if (rightIdx > hi) {
-            // right side consumed
-            a[i] = aux[leftIdx++];
-        }
-        else if (compare(aux[rightIdx], aux[leftIdx]) < 0) {
-            // right element is less -> comes first
-            a[i] = aux[rightIdx++];
+        else if (val > 0) {
+            higher.push(value);
         }
         else {
-            // left element comes first (less or equal)
-            a[i] = aux[leftIdx++];
+            pivots.push(value);
         }
     }
-}
-function _sort(a, compare, lo, hi, aux) {
-    if (hi <= lo) {
-        return;
+    if (nth < lower.length) {
+        return quickSelect(nth, lower, compare);
     }
-    const mid = lo + ((hi - lo) / 2) | 0;
-    _sort(a, compare, lo, mid, aux);
-    _sort(a, compare, mid + 1, hi, aux);
-    if (compare(a[mid], a[mid + 1]) <= 0) {
-        // left and right are sorted and if the last-left element is less
-        // or equals than the first-right element there is nothing else
-        // to do
-        return;
+    else if (nth < lower.length + pivots.length) {
+        return pivots[0];
     }
-    _merge(a, compare, lo, mid, hi, aux);
+    else {
+        return quickSelect(nth - (lower.length + pivots.length), higher, compare);
+    }
 }
 export function groupBy(data, compare) {
     const result = [];
     let currentGroup = undefined;
-    for (const element of mergeSort(data.slice(0), compare)) {
+    for (const element of data.slice(0).sort(compare)) {
         if (!currentGroup || compare(currentGroup[0], element) !== 0) {
             currentGroup = [element];
             result.push(currentGroup);
@@ -145,7 +129,7 @@ export function isNonEmptyArray(obj) {
 }
 /**
  * Removes duplicates from the given array. The optional keyFn allows to specify
- * how elements are checked for equalness by returning a unique string for each.
+ * how elements are checked for equality by returning a unique string for each.
  */
 export function distinct(array, keyFn) {
     if (!keyFn) {
@@ -173,21 +157,21 @@ export function distinctES6(array) {
         return true;
     });
 }
-/**
- * @deprecated ES6: use `Array.findIndex`
- */
-export function firstIndex(array, fn) {
-    for (let i = 0; i < array.length; i++) {
+export function findLast(arr, predicate) {
+    const idx = lastIndex(arr, predicate);
+    if (idx === -1) {
+        return undefined;
+    }
+    return arr[idx];
+}
+export function lastIndex(array, fn) {
+    for (let i = array.length - 1; i >= 0; i--) {
         const element = array[i];
         if (fn(element)) {
             return i;
         }
     }
     return -1;
-}
-export function first(array, fn, notFoundValue = undefined) {
-    const index = firstIndex(array, fn);
-    return index < 0 ? notFoundValue : array[index];
 }
 export function firstOrDefault(array, notFoundValue) {
     return array.length > 0 ? array[0] : notFoundValue;
@@ -248,4 +232,91 @@ export function pushToEnd(arr, value) {
 }
 export function asArray(x) {
     return Array.isArray(x) ? x : [x];
+}
+/**
+ * Insert the new items in the array.
+ * @param array The original array.
+ * @param start The zero-based location in the array from which to start inserting elements.
+ * @param newItems The items to be inserted
+ */
+export function insertInto(array, start, newItems) {
+    const startIdx = getActualStartIndex(array, start);
+    const originalLength = array.length;
+    const newItemsLength = newItems.length;
+    array.length = originalLength + newItemsLength;
+    // Move the items after the start index, start from the end so that we don't overwrite any value.
+    for (let i = originalLength - 1; i >= startIdx; i--) {
+        array[i + newItemsLength] = array[i];
+    }
+    for (let i = 0; i < newItemsLength; i++) {
+        array[i + startIdx] = newItems[i];
+    }
+}
+/**
+ * Removes elements from an array and inserts new elements in their place, returning the deleted elements. Alternative to the native Array.splice method, it
+ * can only support limited number of items due to the maximum call stack size limit.
+ * @param array The original array.
+ * @param start The zero-based location in the array from which to start removing elements.
+ * @param deleteCount The number of elements to remove.
+ * @returns An array containing the elements that were deleted.
+ */
+export function splice(array, start, deleteCount, newItems) {
+    const index = getActualStartIndex(array, start);
+    const result = array.splice(index, deleteCount);
+    insertInto(array, index, newItems);
+    return result;
+}
+/**
+ * Determine the actual start index (same logic as the native splice() or slice())
+ * If greater than the length of the array, start will be set to the length of the array. In this case, no element will be deleted but the method will behave as an adding function, adding as many element as item[n*] provided.
+ * If negative, it will begin that many elements from the end of the array. (In this case, the origin -1, meaning -n is the index of the nth last element, and is therefore equivalent to the index of array.length - n.) If array.length + start is less than 0, it will begin from index 0.
+ * @param array The target array.
+ * @param start The operation index.
+ */
+function getActualStartIndex(array, start) {
+    return start < 0 ? Math.max(start + array.length, 0) : Math.min(start, array.length);
+}
+export class ArrayQueue {
+    /**
+     * Constructs a queue that is backed by the given array. Runtime is O(1).
+    */
+    constructor(items) {
+        this.items = items;
+        this.firstIdx = 0;
+        this.lastIdx = this.items.length - 1;
+    }
+    /**
+     * Consumes elements from the beginning of the queue as long as the predicate returns true.
+     * If no elements were consumed, `null` is returned. Has a runtime of O(result.length).
+    */
+    takeWhile(predicate) {
+        // P(k) := k <= this.lastIdx && predicate(this.items[k])
+        // Find s := min { k | k >= this.firstIdx && !P(k) } and return this.data[this.firstIdx...s)
+        let startIdx = this.firstIdx;
+        while (startIdx < this.items.length && predicate(this.items[startIdx])) {
+            startIdx++;
+        }
+        const result = startIdx === this.firstIdx ? null : this.items.slice(this.firstIdx, startIdx);
+        this.firstIdx = startIdx;
+        return result;
+    }
+    /**
+     * Consumes elements from the end of the queue as long as the predicate returns true.
+     * If no elements were consumed, `null` is returned.
+     * The result has the same order as the underlying array!
+    */
+    takeFromEndWhile(predicate) {
+        // P(k) := this.firstIdx >= k && predicate(this.items[k])
+        // Find s := max { k | k <= this.lastIdx && !P(k) } and return this.data(s...this.lastIdx]
+        let endIdx = this.lastIdx;
+        while (endIdx >= 0 && predicate(this.items[endIdx])) {
+            endIdx--;
+        }
+        const result = endIdx === this.lastIdx ? null : this.items.slice(endIdx + 1, this.lastIdx + 1);
+        this.lastIdx = endIdx;
+        return result;
+    }
+    peek() {
+        return this.items[this.firstIdx];
+    }
 }

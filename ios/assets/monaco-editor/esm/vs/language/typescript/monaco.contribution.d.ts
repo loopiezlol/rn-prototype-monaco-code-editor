@@ -12,7 +12,9 @@ export declare enum JsxEmit {
     None = 0,
     Preserve = 1,
     React = 2,
-    ReactNative = 3
+    ReactNative = 3,
+    ReactJSX = 4,
+    ReactJSXDev = 5
 }
 export declare enum NewLineKind {
     CarriageReturnLineFeed = 0,
@@ -126,11 +128,25 @@ export interface DiagnosticsOptions {
     noSemanticValidation?: boolean;
     noSyntaxValidation?: boolean;
     noSuggestionDiagnostics?: boolean;
+    /**
+     * Limit diagnostic computation to only visible files.
+     * Defaults to false.
+     */
+    onlyVisible?: boolean;
     diagnosticCodesToIgnore?: number[];
 }
 export interface WorkerOptions {
     /** A full HTTP path to a JavaScript file which adds a function `customTSWorkerFactory` to the self inside a web-worker */
     customWorkerPath?: string;
+}
+interface InlayHintsOptions {
+    readonly includeInlayParameterNameHints?: 'none' | 'literals' | 'all';
+    readonly includeInlayParameterNameHintsWhenArgumentMatchesName?: boolean;
+    readonly includeInlayFunctionParameterTypeHints?: boolean;
+    readonly includeInlayVariableTypeHints?: boolean;
+    readonly includeInlayPropertyDeclarationTypeHints?: boolean;
+    readonly includeInlayFunctionLikeReturnTypeHints?: boolean;
+    readonly includeInlayEnumMemberValueHints?: boolean;
 }
 interface IExtraLib {
     content: string;
@@ -153,15 +169,18 @@ interface DiagnosticMessageChain {
 export interface Diagnostic extends DiagnosticRelatedInformation {
     /** May store more in future. For now, this will simply be `true` to indicate when a diagnostic is an unused-identifier diagnostic. */
     reportsUnnecessary?: {};
+    reportsDeprecated?: {};
     source?: string;
     relatedInformation?: DiagnosticRelatedInformation[];
 }
-interface DiagnosticRelatedInformation {
+export interface DiagnosticRelatedInformation {
     /** Diagnostic category: warning = 0, error = 1, suggestion = 2, message = 3 */
     category: 0 | 1 | 2 | 3;
     code: number;
-    /** TypeScriptWorker removes this to avoid serializing circular JSON structures. */
-    file: undefined;
+    /** TypeScriptWorker removes all but the `fileName` property to avoid serializing circular JSON structures. */
+    file: {
+        fileName: string;
+    } | undefined;
     start: number | undefined;
     length: number | undefined;
     messageText: string | DiagnosticMessageChain;
@@ -185,6 +204,7 @@ export interface LanguageServiceDefaults {
      */
     readonly onDidExtraLibsChange: IEvent<void>;
     readonly workerOptions: WorkerOptions;
+    readonly inlayHintsOptions: InlayHintsOptions;
     /**
      * Get the current extra libs registered with the language service.
      */
@@ -245,6 +265,10 @@ export interface LanguageServiceDefaults {
      * to the worker on start or restart.
      */
     getEagerModelSync(): boolean;
+    /**
+     * Configure inlay hints options.
+     */
+    setInlayHintsOptions(options: InlayHintsOptions): void;
 }
 export interface TypeScriptWorker {
     /**
@@ -282,7 +306,7 @@ export interface TypeScriptWorker {
      * Get signature help items for the item at the given file and position.
      * @returns `Promise<typescript.SignatureHelpItems | undefined>`
      */
-    getSignatureHelpItems(fileName: string, position: number): Promise<any | undefined>;
+    getSignatureHelpItems(fileName: string, position: number, options: any): Promise<any | undefined>;
     /**
      * Get quick info for the item at the given position in the file.
      * @returns `Promise<typescript.QuickInfo | undefined>`
@@ -348,6 +372,12 @@ export interface TypeScriptWorker {
      * @returns `Promise<ReadonlyArray<typescript.CodeFixAction>>`
      */
     getCodeFixesAtPosition(fileName: string, start: number, end: number, errorCodes: number[], formatOptions: any): Promise<ReadonlyArray<any>>;
+    /**
+     * Get inlay hints in the range of the file.
+     * @param fileName
+     * @returns `Promise<typescript.InlayHint[]>`
+     */
+    provideInlayHints(fileName: string, start: number, end: number): Promise<ReadonlyArray<any>>;
 }
 export declare const typescriptVersion: string;
 export declare const typescriptDefaults: LanguageServiceDefaults;

@@ -11,7 +11,6 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { mergeSort } from '../../../base/common/arrays.js';
 import { stringDiff } from '../../../base/common/diff/diff.js';
 import { globals } from '../../../base/common/platform.js';
 import { URI } from '../../../base/common/uri.js';
@@ -24,15 +23,13 @@ import { computeLinks } from '../modes/linkComputer.js';
 import { BasicInplaceReplace } from '../modes/supports/inplaceReplaceSupport.js';
 import { createMonacoBaseAPI } from '../standalone/standaloneBase.js';
 import * as types from '../../../base/common/types.js';
+import { StopWatch } from '../../../base/common/stopwatch.js';
 /**
  * @internal
  */
-class MirrorModel extends BaseMirrorModel {
+export class MirrorModel extends BaseMirrorModel {
     get uri() {
         return this._uri;
-    }
-    get version() {
-        return this._versionId;
     }
     get eol() {
         return this._eol;
@@ -131,7 +128,7 @@ class MirrorModel extends BaseMirrorModel {
     offsetAt(position) {
         position = this._validatePosition(position);
         this._ensureLineStarts();
-        return this._lineStarts.getAccumulatedValue(position.lineNumber - 2) + (position.column - 1);
+        return this._lineStarts.getPrefixSum(position.lineNumber - 2) + (position.column - 1);
     }
     positionAt(offset) {
         offset = Math.floor(offset);
@@ -282,7 +279,7 @@ export class EditorSimpleWorker {
             }
             const result = [];
             let lastEol = undefined;
-            edits = mergeSort(edits, (a, b) => {
+            edits = edits.slice(0).sort((a, b) => {
                 if (a.range && b.range) {
                     return Range.compareRangesUsingStarts(a.range, b.range);
                 }
@@ -341,33 +338,27 @@ export class EditorSimpleWorker {
             return computeLinks(model);
         });
     }
-    textualSuggest(modelUrl, position, wordDef, wordDefFlags) {
+    textualSuggest(modelUrls, leadingWord, wordDef, wordDefFlags) {
         return __awaiter(this, void 0, void 0, function* () {
-            const model = this._getModel(modelUrl);
-            if (!model) {
-                return null;
-            }
-            const words = [];
-            const seen = new Set();
+            const sw = new StopWatch(true);
             const wordDefRegExp = new RegExp(wordDef, wordDefFlags);
-            const wordAt = model.getWordAtPosition(position, wordDefRegExp);
-            if (wordAt) {
-                seen.add(model.getValueInRange(wordAt));
-            }
-            for (let word of model.words(wordDefRegExp)) {
-                if (seen.has(word)) {
+            const seen = new Set();
+            outer: for (let url of modelUrls) {
+                const model = this._getModel(url);
+                if (!model) {
                     continue;
                 }
-                seen.add(word);
-                if (!isNaN(Number(word))) {
-                    continue;
-                }
-                words.push(word);
-                if (seen.size > EditorSimpleWorker._suggestionsLimit) {
-                    break;
+                for (let word of model.words(wordDefRegExp)) {
+                    if (word === leadingWord || !isNaN(Number(word))) {
+                        continue;
+                    }
+                    seen.add(word);
+                    if (seen.size > EditorSimpleWorker._suggestionsLimit) {
+                        break outer;
+                    }
                 }
             }
-            return words;
+            return { words: Array.from(seen), duration: sw.elapsed() };
         });
     }
     // ---- END suggest --------------------------------------------------------------------------

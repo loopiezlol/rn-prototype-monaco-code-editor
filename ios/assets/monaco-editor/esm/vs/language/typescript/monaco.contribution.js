@@ -23,6 +23,8 @@ export var JsxEmit;
     JsxEmit[JsxEmit["Preserve"] = 1] = "Preserve";
     JsxEmit[JsxEmit["React"] = 2] = "React";
     JsxEmit[JsxEmit["ReactNative"] = 3] = "ReactNative";
+    JsxEmit[JsxEmit["ReactJSX"] = 4] = "ReactJSX";
+    JsxEmit[JsxEmit["ReactJSXDev"] = 5] = "ReactJSXDev";
 })(JsxEmit || (JsxEmit = {}));
 export var NewLineKind;
 (function (NewLineKind) {
@@ -50,7 +52,7 @@ export var ModuleResolutionKind;
 })(ModuleResolutionKind || (ModuleResolutionKind = {}));
 // --- TypeScript configuration and defaults ---------
 var LanguageServiceDefaultsImpl = /** @class */ (function () {
-    function LanguageServiceDefaultsImpl(compilerOptions, diagnosticsOptions, workerOptions) {
+    function LanguageServiceDefaultsImpl(compilerOptions, diagnosticsOptions, workerOptions, inlayHintsOptions) {
         this._onDidChange = new Emitter();
         this._onDidExtraLibsChange = new Emitter();
         this._extraLibs = Object.create(null);
@@ -59,6 +61,7 @@ var LanguageServiceDefaultsImpl = /** @class */ (function () {
         this.setCompilerOptions(compilerOptions);
         this.setDiagnosticsOptions(diagnosticsOptions);
         this.setWorkerOptions(workerOptions);
+        this.setInlayHintsOptions(inlayHintsOptions);
         this._onDidExtraLibsChangeTimeout = -1;
     }
     Object.defineProperty(LanguageServiceDefaultsImpl.prototype, "onDidChange", {
@@ -78,6 +81,13 @@ var LanguageServiceDefaultsImpl = /** @class */ (function () {
     Object.defineProperty(LanguageServiceDefaultsImpl.prototype, "workerOptions", {
         get: function () {
             return this._workerOptions;
+        },
+        enumerable: false,
+        configurable: true
+    });
+    Object.defineProperty(LanguageServiceDefaultsImpl.prototype, "inlayHintsOptions", {
+        get: function () {
+            return this._inlayHintsOptions;
         },
         enumerable: false,
         configurable: true
@@ -179,6 +189,10 @@ var LanguageServiceDefaultsImpl = /** @class */ (function () {
         this._workerOptions = options || Object.create(null);
         this._onDidChange.fire(undefined);
     };
+    LanguageServiceDefaultsImpl.prototype.setInlayHintsOptions = function (options) {
+        this._inlayHintsOptions = options || Object.create(null);
+        this._onDidChange.fire(undefined);
+    };
     LanguageServiceDefaultsImpl.prototype.setMaximumWorkerIdleTime = function (value) { };
     LanguageServiceDefaultsImpl.prototype.setEagerModelSync = function (value) {
         // doesn't fire an event since no
@@ -191,8 +205,8 @@ var LanguageServiceDefaultsImpl = /** @class */ (function () {
     return LanguageServiceDefaultsImpl;
 }());
 export var typescriptVersion = tsversion;
-export var typescriptDefaults = new LanguageServiceDefaultsImpl({ allowNonTsExtensions: true, target: ScriptTarget.Latest }, { noSemanticValidation: false, noSyntaxValidation: false }, {});
-export var javascriptDefaults = new LanguageServiceDefaultsImpl({ allowNonTsExtensions: true, allowJs: true, target: ScriptTarget.Latest }, { noSemanticValidation: true, noSyntaxValidation: false }, {});
+export var typescriptDefaults = new LanguageServiceDefaultsImpl({ allowNonTsExtensions: true, target: ScriptTarget.Latest }, { noSemanticValidation: false, noSyntaxValidation: false, onlyVisible: false }, {}, {});
+export var javascriptDefaults = new LanguageServiceDefaultsImpl({ allowNonTsExtensions: true, allowJs: true, target: ScriptTarget.Latest }, { noSemanticValidation: true, noSyntaxValidation: false, onlyVisible: false }, {}, {});
 export var getTypeScriptWorker = function () {
     return getMode().then(function (mode) { return mode.getTypeScriptWorker(); });
 };

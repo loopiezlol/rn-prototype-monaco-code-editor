@@ -54,7 +54,7 @@ define('vs/basic-languages/swift/swift',["require", "exports"], function (requir
             '@IBInspectable',
             '@IBOutlet'
         ],
-        accessmodifiers: ['public', 'private', 'internal'],
+        accessmodifiers: ['public', 'private', 'fileprivate', 'internal'],
         keywords: [
             '__COLUMN__',
             '__FILE__',
@@ -80,6 +80,7 @@ define('vs/basic-languages/swift/swift',["require", "exports"], function (requir
             'enum',
             'extension',
             'fallthrough',
+            'fileprivate',
             'final',
             'for',
             'func',
@@ -190,7 +191,7 @@ define('vs/basic-languages/swift/swift',["require", "exports"], function (requir
             ],
             attribute: [
                 [
-                    /\@@identifier/,
+                    /@@@identifier/,
                     {
                         cases: {
                             '@attributes': 'keyword.control',

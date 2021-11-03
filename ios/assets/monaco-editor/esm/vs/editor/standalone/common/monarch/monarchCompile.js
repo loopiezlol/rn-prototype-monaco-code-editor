@@ -68,12 +68,19 @@ function createKeywordMatcher(arr, caseInsensitive = false) {
 /**
  * Compiles a regular expression string, adding the 'i' flag if 'ignoreCase' is set, and the 'u' flag if 'unicode' is set.
  * Also replaces @\w+ or sequences with the content of the specified attribute
+ * @\w+ replacement can be avoided by escaping `@` signs with another `@` sign.
+ * @example /@attr/ will be replaced with the value of lexer[attr]
+ * @example /@@text/ will not be replaced and will become /@text/.
  */
 function compileRegExp(lexer, str) {
+    // @@ must be interpreted as a literal @, so we replace all occurences of @@ with a placeholder character
+    str = str.replace(/@@/g, `\x01`);
     let n = 0;
-    while (str.indexOf('@') >= 0 && n < 5) { // at most 5 expansions
-        n++;
+    let hadExpansion;
+    do {
+        hadExpansion = false;
         str = str.replace(/@(\w+)/g, function (s, attr) {
+            hadExpansion = true;
             let sub = '';
             if (typeof (lexer[attr]) === 'string') {
                 sub = lexer[attr];
@@ -91,7 +98,10 @@ function compileRegExp(lexer, str) {
             }
             return (monarchCommon.empty(sub) ? '' : '(?:' + sub + ')');
         });
-    }
+        n++;
+    } while (hadExpansion && n < 5);
+    // handle escaped @@
+    str = str.replace(/\x01/g, '@');
     let flags = (lexer.ignoreCase ? 'i' : '') + (lexer.unicode ? 'u' : '');
     return new RegExp(str, flags);
 }
@@ -370,6 +380,7 @@ export function compile(languageId, json) {
     // Create our lexer
     let lexer = {};
     lexer.languageId = languageId;
+    lexer.includeLF = bool(json.includeLF, false);
     lexer.noThrow = false; // raise exceptions during compilation
     lexer.maxStack = 100;
     // Set standard fields: be defensive about types
@@ -382,6 +393,7 @@ export function compile(languageId, json) {
     // For calling compileAction later on
     let lexerMin = json;
     lexerMin.languageId = languageId;
+    lexerMin.includeLF = lexer.includeLF;
     lexerMin.ignoreCase = lexer.ignoreCase;
     lexerMin.unicode = lexer.unicode;
     lexerMin.noThrow = lexer.noThrow;

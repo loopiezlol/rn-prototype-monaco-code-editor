@@ -2,7 +2,7 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-import { contrastBorder, listFocusBackground, listFocusForeground, listActiveSelectionBackground, listActiveSelectionForeground, listInactiveSelectionForeground, listInactiveSelectionBackground, listInactiveFocusBackground, listHoverBackground, listHoverForeground, listDropBackground, widgetShadow, activeContrastBorder, badgeBackground, badgeForeground, menuForeground, menuBackground, menuSelectionForeground, menuSelectionBackground, menuSelectionBorder, menuBorder, menuSeparatorBackground, darken, listFilterWidgetOutline, listFilterWidgetNoMatchesOutline, listFilterWidgetBackground, treeIndentGuidesStroke, resolveColorValue } from './colorRegistry.js';
+import { activeContrastBorder, badgeBackground, badgeForeground, contrastBorder, listActiveSelectionBackground, listActiveSelectionForeground, listActiveSelectionIconForeground, listDropBackground, listFilterWidgetBackground, listFilterWidgetNoMatchesOutline, listFilterWidgetOutline, listFocusBackground, listFocusForeground, listFocusOutline, listHoverBackground, listHoverForeground, listInactiveFocusBackground, listInactiveFocusOutline, listInactiveSelectionBackground, listInactiveSelectionForeground, listInactiveSelectionIconForeground, menuBackground, menuBorder, menuForeground, menuSelectionBackground, menuSelectionBorder, menuSelectionForeground, menuSeparatorBackground, resolveColorValue, tableColumnsBorder, treeIndentGuidesStroke, widgetShadow } from './colorRegistry.js';
 export function computeStyles(theme, styleMap) {
     const styles = Object.create(null);
     for (let key in styleMap) {
@@ -14,7 +14,7 @@ export function computeStyles(theme, styleMap) {
     return styles;
 }
 export function attachStyler(themeService, styleMap, widgetOrCallback) {
-    function applyStyles(theme) {
+    function applyStyles() {
         const styles = computeStyles(themeService.getColorTheme(), styleMap);
         if (typeof widgetOrCallback === 'function') {
             widgetOrCallback(styles);
@@ -23,13 +23,13 @@ export function attachStyler(themeService, styleMap, widgetOrCallback) {
             widgetOrCallback.style(styles);
         }
     }
-    applyStyles(themeService.getColorTheme());
+    applyStyles();
     return themeService.onDidColorThemeChange(applyStyles);
 }
 export function attachBadgeStyler(widget, themeService, style) {
     return attachStyler(themeService, {
-        badgeBackground: (style && style.badgeBackground) || badgeBackground,
-        badgeForeground: (style && style.badgeForeground) || badgeForeground,
+        badgeBackground: (style === null || style === void 0 ? void 0 : style.badgeBackground) || badgeBackground,
+        badgeForeground: (style === null || style === void 0 ? void 0 : style.badgeForeground) || badgeForeground,
         badgeBorder: contrastBorder
     }, widget);
 }
@@ -37,26 +37,30 @@ export function attachListStyler(widget, themeService, overrides) {
     return attachStyler(themeService, Object.assign(Object.assign({}, defaultListStyles), (overrides || {})), widget);
 }
 export const defaultListStyles = {
-    listFocusBackground: listFocusBackground,
-    listFocusForeground: listFocusForeground,
-    listActiveSelectionBackground: darken(listActiveSelectionBackground, 0.1),
-    listActiveSelectionForeground: listActiveSelectionForeground,
+    listFocusBackground,
+    listFocusForeground,
+    listFocusOutline,
+    listActiveSelectionBackground,
+    listActiveSelectionForeground,
+    listActiveSelectionIconForeground,
     listFocusAndSelectionBackground: listActiveSelectionBackground,
     listFocusAndSelectionForeground: listActiveSelectionForeground,
-    listInactiveSelectionBackground: listInactiveSelectionBackground,
-    listInactiveSelectionForeground: listInactiveSelectionForeground,
-    listInactiveFocusBackground: listInactiveFocusBackground,
-    listHoverBackground: listHoverBackground,
-    listHoverForeground: listHoverForeground,
-    listDropBackground: listDropBackground,
-    listFocusOutline: activeContrastBorder,
+    listInactiveSelectionBackground,
+    listInactiveSelectionIconForeground,
+    listInactiveSelectionForeground,
+    listInactiveFocusBackground,
+    listInactiveFocusOutline,
+    listHoverBackground,
+    listHoverForeground,
+    listDropBackground,
     listSelectionOutline: activeContrastBorder,
     listHoverOutline: activeContrastBorder,
-    listFilterWidgetBackground: listFilterWidgetBackground,
-    listFilterWidgetOutline: listFilterWidgetOutline,
-    listFilterWidgetNoMatchesOutline: listFilterWidgetNoMatchesOutline,
+    listFilterWidgetBackground,
+    listFilterWidgetOutline,
+    listFilterWidgetNoMatchesOutline,
     listMatchesShadow: widgetShadow,
-    treeIndentGuidesStroke: treeIndentGuidesStroke
+    treeIndentGuidesStroke,
+    tableColumnsBorder
 };
 export const defaultMenuStyles = {
     shadowColor: widgetShadow,

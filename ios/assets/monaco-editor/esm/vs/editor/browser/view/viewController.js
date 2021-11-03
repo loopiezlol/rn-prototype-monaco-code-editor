@@ -18,8 +18,8 @@ export class ViewController {
     type(text) {
         this.commandDelegate.type(text);
     }
-    replacePreviousChar(text, replaceCharCnt) {
-        this.commandDelegate.replacePreviousChar(text, replaceCharCnt);
+    compositionType(text, replacePrevCharCnt, replaceNextCharCnt, positionDelta) {
+        this.commandDelegate.compositionType(text, replacePrevCharCnt, replaceNextCharCnt, positionDelta);
     }
     compositionStart() {
         this.commandDelegate.startComposition();
@@ -44,7 +44,7 @@ export class ViewController {
         return viewPosition;
     }
     _hasMulticursorModifier(data) {
-        switch (this.configuration.options.get(61 /* multiCursorModifier */)) {
+        switch (this.configuration.options.get(69 /* multiCursorModifier */)) {
             case 'altKey':
                 return data.altKey;
             case 'ctrlKey':
@@ -56,7 +56,7 @@ export class ViewController {
         }
     }
     _hasNonMulticursorModifier(data) {
-        switch (this.configuration.options.get(61 /* multiCursorModifier */)) {
+        switch (this.configuration.options.get(69 /* multiCursorModifier */)) {
             case 'altKey':
                 return data.ctrlKey || data.metaKey;
             case 'ctrlKey':
@@ -69,8 +69,8 @@ export class ViewController {
     }
     dispatchMouse(data) {
         const options = this.configuration.options;
-        const selectionClipboardIsOn = (platform.isLinux && options.get(88 /* selectionClipboard */));
-        const columnSelection = options.get(13 /* columnSelection */);
+        const selectionClipboardIsOn = (platform.isLinux && options.get(95 /* selectionClipboard */));
+        const columnSelection = options.get(18 /* columnSelection */);
         if (data.middleButton && !selectionClipboardIsOn) {
             this._columnSelect(data.position, data.mouseColumn, data.inSelectionMode);
         }
@@ -254,6 +254,9 @@ export class ViewController {
     }
     emitMouseDrop(e) {
         this.userInputEvents.emitMouseDrop(e);
+    }
+    emitMouseDropCanceled() {
+        this.userInputEvents.emitMouseDropCanceled();
     }
     emitMouseWheel(e) {
         this.userInputEvents.emitMouseWheel(e);

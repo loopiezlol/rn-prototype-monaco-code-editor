@@ -2,128 +2,135 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-import * as nls from '../../../nls.js';
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
 import * as dom from '../../../base/browser/dom.js';
-import { CancellationToken } from '../../../base/common/cancellation.js';
-import { Color, RGBA } from '../../../base/common/color.js';
-import { MarkdownString, isEmptyMarkdownString, markedStringsEquals } from '../../../base/common/htmlContent.js';
-import { toDisposable, DisposableStore, combinedDisposable, MutableDisposable } from '../../../base/common/lifecycle.js';
+import { HoverAction, HoverWidget } from '../../../base/browser/ui/hover/hoverWidget.js';
+import { Widget } from '../../../base/browser/ui/widget.js';
+import { coalesce, flatten } from '../../../base/common/arrays.js';
+import { Disposable, DisposableStore } from '../../../base/common/lifecycle.js';
 import { Position } from '../../common/core/position.js';
 import { Range } from '../../common/core/range.js';
 import { ModelDecorationOptions } from '../../common/model/textModel.js';
-import { HoverProviderRegistry, TokenizationRegistry } from '../../common/modes.js';
-import { getColorPresentations } from '../colorPicker/color.js';
-import { ColorDetector } from '../colorPicker/colorDetector.js';
-import { ColorPickerModel } from '../colorPicker/colorPickerModel.js';
-import { ColorPickerWidget } from '../colorPicker/colorPickerWidget.js';
-import { getHover } from './getHover.js';
+import { TokenizationRegistry } from '../../common/modes.js';
+import { ColorHoverParticipant } from './colorHoverParticipant.js';
 import { HoverOperation } from './hoverOperation.js';
-import { ContentHoverWidget } from './hoverWidgets.js';
-import { MarkdownRenderer } from '../markdown/markdownRenderer.js';
-import { registerThemingParticipant } from '../../../platform/theme/common/themeService.js';
-import { coalesce, isNonEmptyArray, asArray } from '../../../base/common/arrays.js';
-import { IMarkerData, MarkerSeverity } from '../../../platform/markers/common/markers.js';
-import { basename } from '../../../base/common/resources.js';
-import { onUnexpectedError } from '../../../base/common/errors.js';
-import { NullOpenerService } from '../../../platform/opener/common/opener.js';
-import { MarkerController, NextMarkerAction } from '../gotoError/gotoError.js';
-import { createCancelablePromise } from '../../../base/common/async.js';
-import { getCodeActions } from '../codeAction/codeAction.js';
-import { QuickFixAction, QuickFixController } from '../codeAction/codeActionCommands.js';
-import { CodeActionKind } from '../codeAction/types.js';
-import { textLinkForeground } from '../../../platform/theme/common/colorRegistry.js';
-import { Progress } from '../../../platform/progress/common/progress.js';
+import { HoverRangeAnchor } from './hoverTypes.js';
+import { MarkdownHoverParticipant } from './markdownHoverParticipant.js';
+import { MarkerHoverParticipant } from './markerHoverParticipant.js';
+import { InlineCompletionsHoverParticipant } from '../inlineCompletions/inlineCompletionsHoverParticipant.js';
+import { IInstantiationService } from '../../../platform/instantiation/common/instantiation.js';
+import { IKeybindingService } from '../../../platform/keybinding/common/keybinding.js';
 const $ = dom.$;
-class ColorHover {
-    constructor(range, color, provider) {
-        this.range = range;
-        this.color = color;
-        this.provider = provider;
+let EditorHoverStatusBar = class EditorHoverStatusBar extends Disposable {
+    constructor(_keybindingService) {
+        super();
+        this._keybindingService = _keybindingService;
+        this._hasContent = false;
+        this.hoverElement = $('div.hover-row.status-bar');
+        this.actionsElement = dom.append(this.hoverElement, $('div.actions'));
     }
-}
-class MarkerHover {
-    constructor(range, marker) {
-        this.range = range;
-        this.marker = marker;
+    get hasContent() {
+        return this._hasContent;
     }
-}
+    addAction(actionOptions) {
+        const keybinding = this._keybindingService.lookupKeybinding(actionOptions.commandId);
+        const keybindingLabel = keybinding ? keybinding.getLabel() : null;
+        this._hasContent = true;
+        return this._register(HoverAction.render(this.actionsElement, actionOptions, keybindingLabel));
+    }
+    append(element) {
+        const result = dom.append(this.actionsElement, element);
+        this._hasContent = true;
+        return result;
+    }
+};
+EditorHoverStatusBar = __decorate([
+    __param(0, IKeybindingService)
+], EditorHoverStatusBar);
 class ModesContentComputer {
-    constructor(editor, _markerDecorationsService) {
-        this._markerDecorationsService = _markerDecorationsService;
+    constructor(editor, _participants) {
+        this._participants = _participants;
         this._editor = editor;
         this._result = [];
+        this._anchor = null;
     }
-    setRange(range) {
-        this._range = range;
+    setAnchor(anchor) {
+        this._anchor = anchor;
         this._result = [];
     }
     clearResult() {
         this._result = [];
     }
-    computeAsync(token) {
-        if (!this._editor.hasModel() || !this._range) {
-            return Promise.resolve([]);
-        }
-        const model = this._editor.getModel();
-        if (!HoverProviderRegistry.has(model)) {
-            return Promise.resolve([]);
-        }
-        return getHover(model, new Position(this._range.startLineNumber, this._range.startColumn), token);
-    }
-    computeSync() {
-        if (!this._editor.hasModel() || !this._range) {
+    static _getLineDecorations(editor, anchor) {
+        if (anchor.type !== 1 /* Range */) {
             return [];
         }
-        const model = this._editor.getModel();
-        const lineNumber = this._range.startLineNumber;
-        if (lineNumber > this._editor.getModel().getLineCount()) {
-            // Illegal line number => no results
-            return [];
-        }
-        const colorDetector = ColorDetector.get(this._editor);
+        const model = editor.getModel();
+        const lineNumber = anchor.range.startLineNumber;
         const maxColumn = model.getLineMaxColumn(lineNumber);
-        const lineDecorations = this._editor.getLineDecorations(lineNumber);
-        let didFindColor = false;
-        const hoverRange = this._range;
-        const result = lineDecorations.map((d) => {
+        return editor.getLineDecorations(lineNumber).filter((d) => {
+            if (d.options.isWholeLine) {
+                return true;
+            }
             const startColumn = (d.range.startLineNumber === lineNumber) ? d.range.startColumn : 1;
             const endColumn = (d.range.endLineNumber === lineNumber) ? d.range.endColumn : maxColumn;
-            if (startColumn > hoverRange.startColumn || hoverRange.endColumn > endColumn) {
-                return null;
+            if (startColumn > anchor.range.startColumn || anchor.range.endColumn > endColumn) {
+                return false;
             }
-            const range = new Range(hoverRange.startLineNumber, startColumn, hoverRange.startLineNumber, endColumn);
-            const marker = this._markerDecorationsService.getMarker(model, d);
-            if (marker) {
-                return new MarkerHover(range, marker);
-            }
-            const colorData = colorDetector.getColorData(d.range.getStartPosition());
-            if (!didFindColor && colorData) {
-                didFindColor = true;
-                const { color, range } = colorData.colorInfo;
-                return new ColorHover(range, color, colorData.provider);
-            }
-            else {
-                if (isEmptyMarkdownString(d.options.hoverMessage)) {
-                    return null;
-                }
-                const contents = d.options.hoverMessage ? asArray(d.options.hoverMessage) : [];
-                return { contents, range };
-            }
+            return true;
         });
+    }
+    computeAsync(token) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const anchor = this._anchor;
+            if (!this._editor.hasModel() || !anchor) {
+                return Promise.resolve([]);
+            }
+            const lineDecorations = ModesContentComputer._getLineDecorations(this._editor, anchor);
+            const allResults = yield Promise.all(this._participants.map(p => this._computeAsync(p, lineDecorations, anchor, token)));
+            return flatten(allResults);
+        });
+    }
+    _computeAsync(participant, lineDecorations, anchor, token) {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (!participant.computeAsync) {
+                return [];
+            }
+            return participant.computeAsync(anchor, lineDecorations, token);
+        });
+    }
+    computeSync() {
+        if (!this._editor.hasModel() || !this._anchor) {
+            return [];
+        }
+        const lineDecorations = ModesContentComputer._getLineDecorations(this._editor, this._anchor);
+        let result = [];
+        for (const participant of this._participants) {
+            result = result.concat(participant.computeSync(this._anchor, lineDecorations));
+        }
         return coalesce(result);
     }
     onResult(result, isFromSynchronousComputation) {
         // Always put synchronous messages before asynchronous ones
         if (isFromSynchronousComputation) {
-            this._result = result.concat(this._result.sort((a, b) => {
-                if (a instanceof ColorHover) { // sort picker messages at to the top
-                    return -1;
-                }
-                else if (b instanceof ColorHover) {
-                    return 1;
-                }
-                return 0;
-            }));
+            this._result = result.concat(this._result);
         }
         else {
             this._result = this._result.concat(result);
@@ -133,61 +140,186 @@ class ModesContentComputer {
         return this._result.slice(0);
     }
     getResultWithLoadingMessage() {
-        return this._result.slice(0).concat([this._getLoadingMessage()]);
-    }
-    _getLoadingMessage() {
-        return {
-            range: this._range,
-            contents: [new MarkdownString().appendText(nls.localize('modesContentHover.loading', "Loading..."))]
-        };
+        if (this._anchor) {
+            for (const participant of this._participants) {
+                if (participant.createLoadingMessage) {
+                    const loadingMessage = participant.createLoadingMessage(this._anchor);
+                    if (loadingMessage) {
+                        return this._result.slice(0).concat([loadingMessage]);
+                    }
+                }
+            }
+        }
+        return this._result.slice(0);
     }
 }
-const markerCodeActionTrigger = {
-    type: 2 /* Manual */,
-    filter: { include: CodeActionKind.QuickFix }
-};
-export class ModesContentHoverWidget extends ContentHoverWidget {
-    constructor(editor, _hoverVisibleKey, markerDecorationsService, keybindingService, _themeService, _modeService, _openerService = NullOpenerService) {
-        super(ModesContentHoverWidget.ID, editor, _hoverVisibleKey, keybindingService);
-        this._themeService = _themeService;
-        this._modeService = _modeService;
-        this._openerService = _openerService;
-        this.renderDisposable = this._register(new MutableDisposable());
+let ModesContentHoverWidget = class ModesContentHoverWidget extends Widget {
+    constructor(editor, _hoverVisibleKey, instantiationService, _keybindingService) {
+        super();
+        this._hoverVisibleKey = _hoverVisibleKey;
+        this._keybindingService = _keybindingService;
+        // IContentWidget.allowEditorOverflow
+        this.allowEditorOverflow = true;
+        this._participants = [
+            instantiationService.createInstance(ColorHoverParticipant, editor, this),
+            instantiationService.createInstance(MarkdownHoverParticipant, editor, this),
+            instantiationService.createInstance(InlineCompletionsHoverParticipant, editor, this),
+            instantiationService.createInstance(MarkerHoverParticipant, editor, this),
+        ];
+        this._hover = this._register(new HoverWidget());
+        this._editor = editor;
+        this._isVisible = false;
+        this._stoleFocus = false;
+        this._renderDisposable = null;
+        this.onkeydown(this._hover.containerDomNode, (e) => {
+            if (e.equals(9 /* Escape */)) {
+                this.hide();
+            }
+        });
+        this._register(this._editor.onDidChangeConfiguration((e) => {
+            if (e.hasChanged(43 /* fontInfo */)) {
+                this._updateFont();
+            }
+        }));
+        this._editor.onDidLayoutChange(() => this.layout());
+        this.layout();
+        this._editor.addContentWidget(this);
+        this._showAtPosition = null;
+        this._showAtRange = null;
+        this._stoleFocus = false;
         this._messages = [];
-        this._lastRange = null;
-        this._computer = new ModesContentComputer(this._editor, markerDecorationsService);
+        this._lastAnchor = null;
+        this._computer = new ModesContentComputer(this._editor, this._participants);
         this._highlightDecorations = [];
         this._isChangingDecorations = false;
         this._shouldFocus = false;
         this._colorPicker = null;
-        this._hoverOperation = new HoverOperation(this._computer, result => this._withResult(result, true), null, result => this._withResult(result, false), this._editor.getOption(46 /* hover */).delay);
+        this._hoverOperation = new HoverOperation(this._computer, result => this._withResult(result, true), null, result => this._withResult(result, false), this._editor.getOption(52 /* hover */).delay);
         this._register(dom.addStandardDisposableListener(this.getDomNode(), dom.EventType.FOCUS, () => {
             if (this._colorPicker) {
-                dom.addClass(this.getDomNode(), 'colorpicker-hover');
+                this.getDomNode().classList.add('colorpicker-hover');
             }
         }));
         this._register(dom.addStandardDisposableListener(this.getDomNode(), dom.EventType.BLUR, () => {
-            dom.removeClass(this.getDomNode(), 'colorpicker-hover');
+            this.getDomNode().classList.remove('colorpicker-hover');
         }));
-        this._register(editor.onDidChangeConfiguration((e) => {
-            this._hoverOperation.setHoverTime(this._editor.getOption(46 /* hover */).delay);
+        this._register(editor.onDidChangeConfiguration(() => {
+            this._hoverOperation.setHoverTime(this._editor.getOption(52 /* hover */).delay);
         }));
-        this._register(TokenizationRegistry.onDidChange((e) => {
-            if (this.isVisible && this._lastRange && this._messages.length > 0) {
+        this._register(TokenizationRegistry.onDidChange(() => {
+            if (this._isVisible && this._lastAnchor && this._messages.length > 0) {
                 this._hover.contentsDomNode.textContent = '';
-                this._renderMessages(this._lastRange, this._messages);
+                this._renderMessages(this._lastAnchor, this._messages);
             }
         }));
     }
     dispose() {
         this._hoverOperation.cancel();
+        this._editor.removeContentWidget(this);
         super.dispose();
+    }
+    getId() {
+        return ModesContentHoverWidget.ID;
+    }
+    getDomNode() {
+        return this._hover.containerDomNode;
+    }
+    _shouldShowAt(mouseEvent) {
+        const targetType = mouseEvent.target.type;
+        if (targetType === 6 /* CONTENT_TEXT */) {
+            return true;
+        }
+        if (targetType === 7 /* CONTENT_EMPTY */) {
+            const epsilon = this._editor.getOption(43 /* fontInfo */).typicalHalfwidthCharacterWidth / 2;
+            const data = mouseEvent.target.detail;
+            if (data && !data.isAfterLines && typeof data.horizontalDistanceToText === 'number' && data.horizontalDistanceToText < epsilon) {
+                // Let hover kick in even when the mouse is technically in the empty area after a line, given the distance is small enough
+                return true;
+            }
+        }
+        return false;
+    }
+    maybeShowAt(mouseEvent) {
+        var _a;
+        const anchorCandidates = [];
+        for (const participant of this._participants) {
+            if (typeof participant.suggestHoverAnchor === 'function') {
+                const anchor = participant.suggestHoverAnchor(mouseEvent);
+                if (anchor) {
+                    anchorCandidates.push(anchor);
+                }
+            }
+        }
+        if (this._shouldShowAt(mouseEvent) && mouseEvent.target.range) {
+            // TODO@rebornix. This should be removed if we move Color Picker out of Hover component.
+            // Check if mouse is hovering on color decorator
+            const hoverOnColorDecorator = [...((_a = mouseEvent.target.element) === null || _a === void 0 ? void 0 : _a.classList.values()) || []].find(className => className.startsWith('ced-colorBox'))
+                && mouseEvent.target.range.endColumn - mouseEvent.target.range.startColumn === 1;
+            const showAtRange = (hoverOnColorDecorator // shift the mouse focus by one as color decorator is a `before` decoration of next character.
+                ? new Range(mouseEvent.target.range.startLineNumber, mouseEvent.target.range.startColumn + 1, mouseEvent.target.range.endLineNumber, mouseEvent.target.range.endColumn + 1)
+                : mouseEvent.target.range);
+            anchorCandidates.push(new HoverRangeAnchor(0, showAtRange));
+        }
+        if (anchorCandidates.length === 0) {
+            return false;
+        }
+        anchorCandidates.sort((a, b) => b.priority - a.priority);
+        this._startShowingAt(anchorCandidates[0], 0 /* Delayed */, false);
+        return true;
+    }
+    _showAt(position, range, focus) {
+        // Position has changed
+        this._showAtPosition = position;
+        this._showAtRange = range;
+        this._hoverVisibleKey.set(true);
+        this._isVisible = true;
+        this._hover.containerDomNode.classList.toggle('hidden', !this._isVisible);
+        this._editor.layoutContentWidget(this);
+        // Simply force a synchronous render on the editor
+        // such that the widget does not really render with left = '0px'
+        this._editor.render();
+        this._stoleFocus = focus;
+        if (focus) {
+            this._hover.containerDomNode.focus();
+        }
+    }
+    getPosition() {
+        if (this._isVisible) {
+            return {
+                position: this._showAtPosition,
+                range: this._showAtRange,
+                preference: [
+                    1 /* ABOVE */,
+                    2 /* BELOW */
+                ]
+            };
+        }
+        return null;
+    }
+    _updateFont() {
+        const codeClasses = Array.prototype.slice.call(this._hover.contentsDomNode.getElementsByClassName('code'));
+        codeClasses.forEach(node => this._editor.applyFontInfo(node));
+    }
+    _updateContents(node) {
+        this._hover.contentsDomNode.textContent = '';
+        this._hover.contentsDomNode.appendChild(node);
+        this._updateFont();
+        this._editor.layoutContentWidget(this);
+        this._hover.onContentsChanged();
+    }
+    layout() {
+        const height = Math.max(this._editor.getLayoutInfo().height / 4, 250);
+        const { fontSize, lineHeight } = this._editor.getOption(43 /* fontInfo */);
+        this._hover.contentsDomNode.style.fontSize = `${fontSize}px`;
+        this._hover.contentsDomNode.style.lineHeight = `${lineHeight}px`;
+        this._hover.contentsDomNode.style.maxHeight = `${height}px`;
+        this._hover.contentsDomNode.style.maxWidth = `${Math.max(this._editor.getLayoutInfo().width * 0.66, 500)}px`;
     }
     onModelDecorationsChanged() {
         if (this._isChangingDecorations) {
             return;
         }
-        if (this.isVisible) {
+        if (this._isVisible) {
             // The decorations have changed and the hover is visible,
             // we need to recompute the displayed text
             this._hoverOperation.cancel();
@@ -197,187 +329,130 @@ export class ModesContentHoverWidget extends ContentHoverWidget {
             }
         }
     }
-    startShowingAt(range, mode, focus) {
-        if (this._lastRange && this._lastRange.equalsRange(range)) {
+    startShowingAtRange(range, mode, focus) {
+        this._startShowingAt(new HoverRangeAnchor(0, range), mode, focus);
+    }
+    _startShowingAt(anchor, mode, focus) {
+        if (this._lastAnchor && this._lastAnchor.equals(anchor)) {
             // We have to show the widget at the exact same range as before, so no work is needed
             return;
         }
         this._hoverOperation.cancel();
-        if (this.isVisible) {
+        if (this._isVisible) {
             // The range might have changed, but the hover is visible
             // Instead of hiding it completely, filter out messages that are still in the new range and
             // kick off a new computation
-            if (!this._showAtPosition || this._showAtPosition.lineNumber !== range.startLineNumber) {
+            if (!this._showAtPosition || !this._lastAnchor || !anchor.canAdoptVisibleHover(this._lastAnchor, this._showAtPosition)) {
                 this.hide();
             }
             else {
-                let filteredMessages = [];
-                for (let i = 0, len = this._messages.length; i < len; i++) {
-                    const msg = this._messages[i];
-                    const rng = msg.range;
-                    if (rng && rng.startColumn <= range.startColumn && rng.endColumn >= range.endColumn) {
-                        filteredMessages.push(msg);
-                    }
+                const filteredMessages = this._messages.filter((m) => m.isValidForHoverAnchor(anchor));
+                if (filteredMessages.length === 0) {
+                    this.hide();
                 }
-                if (filteredMessages.length > 0) {
-                    if (hoverContentsEquals(filteredMessages, this._messages)) {
-                        return;
-                    }
-                    this._renderMessages(range, filteredMessages);
+                else if (filteredMessages.length === this._messages.length) {
+                    // no change
+                    return;
                 }
                 else {
-                    this.hide();
+                    this._renderMessages(anchor, filteredMessages);
                 }
             }
         }
-        this._lastRange = range;
-        this._computer.setRange(range);
+        this._lastAnchor = anchor;
+        this._computer.setAnchor(anchor);
         this._shouldFocus = focus;
         this._hoverOperation.start(mode);
     }
     hide() {
-        this._lastRange = null;
+        this._lastAnchor = null;
         this._hoverOperation.cancel();
-        super.hide();
+        if (this._isVisible) {
+            setTimeout(() => {
+                // Give commands a chance to see the key
+                if (!this._isVisible) {
+                    this._hoverVisibleKey.set(false);
+                }
+            }, 0);
+            this._isVisible = false;
+            this._hover.containerDomNode.classList.toggle('hidden', !this._isVisible);
+            this._editor.layoutContentWidget(this);
+            if (this._stoleFocus) {
+                this._editor.focus();
+            }
+        }
         this._isChangingDecorations = true;
         this._highlightDecorations = this._editor.deltaDecorations(this._highlightDecorations, []);
         this._isChangingDecorations = false;
-        this.renderDisposable.clear();
+        if (this._renderDisposable) {
+            this._renderDisposable.dispose();
+            this._renderDisposable = null;
+        }
         this._colorPicker = null;
     }
     isColorPickerVisible() {
-        if (this._colorPicker) {
-            return true;
-        }
-        return false;
+        return !!this._colorPicker;
+    }
+    setColorPicker(widget) {
+        this._colorPicker = widget;
+    }
+    onContentsChanged() {
+        this._hover.onContentsChanged();
     }
     _withResult(result, complete) {
         this._messages = result;
-        if (this._lastRange && this._messages.length > 0) {
-            this._renderMessages(this._lastRange, this._messages);
+        if (this._lastAnchor && this._messages.length > 0) {
+            this._renderMessages(this._lastAnchor, this._messages);
         }
         else if (complete) {
             this.hide();
         }
     }
-    _renderMessages(renderRange, messages) {
-        this.renderDisposable.dispose();
-        this._colorPicker = null;
+    _renderMessages(anchor, messages) {
+        if (this._renderDisposable) {
+            this._renderDisposable.dispose();
+            this._renderDisposable = null;
+        }
+        this._colorPicker = null; // TODO: TypeScript thinks this is always null
         // update column from which to show
         let renderColumn = 1073741824 /* MAX_SAFE_SMALL_INTEGER */;
-        let highlightRange = messages[0].range ? Range.lift(messages[0].range) : null;
+        let highlightRange = messages[0].range;
+        let forceShowAtRange = null;
         let fragment = document.createDocumentFragment();
-        let isEmptyHoverContent = true;
-        let containColorPicker = false;
-        const markdownDisposeables = new DisposableStore();
-        const markerMessages = [];
-        messages.forEach((msg) => {
-            if (!msg.range) {
-                return;
-            }
+        const disposables = new DisposableStore();
+        const hoverParts = new Map();
+        for (const msg of messages) {
             renderColumn = Math.min(renderColumn, msg.range.startColumn);
-            highlightRange = highlightRange ? Range.plusRange(highlightRange, msg.range) : Range.lift(msg.range);
-            if (msg instanceof ColorHover) {
-                containColorPicker = true;
-                const { red, green, blue, alpha } = msg.color;
-                const rgba = new RGBA(Math.round(red * 255), Math.round(green * 255), Math.round(blue * 255), alpha);
-                const color = new Color(rgba);
-                if (!this._editor.hasModel()) {
-                    return;
-                }
-                const editorModel = this._editor.getModel();
-                let range = new Range(msg.range.startLineNumber, msg.range.startColumn, msg.range.endLineNumber, msg.range.endColumn);
-                let colorInfo = { range: msg.range, color: msg.color };
-                // create blank olor picker model and widget first to ensure it's positioned correctly.
-                const model = new ColorPickerModel(color, [], 0);
-                const widget = new ColorPickerWidget(fragment, model, this._editor.getOption(115 /* pixelRatio */), this._themeService);
-                getColorPresentations(editorModel, colorInfo, msg.provider, CancellationToken.None).then(colorPresentations => {
-                    model.colorPresentations = colorPresentations || [];
-                    if (!this._editor.hasModel()) {
-                        // gone...
-                        return;
-                    }
-                    const originalText = this._editor.getModel().getValueInRange(msg.range);
-                    model.guessColorPresentation(color, originalText);
-                    const updateEditorModel = () => {
-                        let textEdits;
-                        let newRange;
-                        if (model.presentation.textEdit) {
-                            textEdits = [model.presentation.textEdit];
-                            newRange = new Range(model.presentation.textEdit.range.startLineNumber, model.presentation.textEdit.range.startColumn, model.presentation.textEdit.range.endLineNumber, model.presentation.textEdit.range.endColumn);
-                            newRange = newRange.setEndPosition(newRange.endLineNumber, newRange.startColumn + model.presentation.textEdit.text.length);
-                        }
-                        else {
-                            textEdits = [{ identifier: null, range, text: model.presentation.label, forceMoveMarkers: false }];
-                            newRange = range.setEndPosition(range.endLineNumber, range.startColumn + model.presentation.label.length);
-                        }
-                        this._editor.pushUndoStop();
-                        this._editor.executeEdits('colorpicker', textEdits);
-                        if (model.presentation.additionalTextEdits) {
-                            textEdits = [...model.presentation.additionalTextEdits];
-                            this._editor.executeEdits('colorpicker', textEdits);
-                            this.hide();
-                        }
-                        this._editor.pushUndoStop();
-                        range = newRange;
-                    };
-                    const updateColorPresentations = (color) => {
-                        return getColorPresentations(editorModel, {
-                            range: range,
-                            color: {
-                                red: color.rgba.r / 255,
-                                green: color.rgba.g / 255,
-                                blue: color.rgba.b / 255,
-                                alpha: color.rgba.a
-                            }
-                        }, msg.provider, CancellationToken.None).then((colorPresentations) => {
-                            model.colorPresentations = colorPresentations || [];
-                        });
-                    };
-                    const colorListener = model.onColorFlushed((color) => {
-                        updateColorPresentations(color).then(updateEditorModel);
-                    });
-                    const colorChangeListener = model.onDidChangeColor(updateColorPresentations);
-                    this._colorPicker = widget;
-                    this.showAt(range.getStartPosition(), range, this._shouldFocus);
-                    this.updateContents(fragment);
-                    this._colorPicker.layout();
-                    this.renderDisposable.value = combinedDisposable(colorListener, colorChangeListener, widget, markdownDisposeables);
-                });
+            highlightRange = Range.plusRange(highlightRange, msg.range);
+            if (msg.forceShowAtRange) {
+                forceShowAtRange = msg.range;
+            }
+            if (!hoverParts.has(msg.owner)) {
+                hoverParts.set(msg.owner, []);
+            }
+            const dest = hoverParts.get(msg.owner);
+            dest.push(msg);
+        }
+        const statusBar = disposables.add(new EditorHoverStatusBar(this._keybindingService));
+        for (const [participant, participantHoverParts] of hoverParts) {
+            disposables.add(participant.renderHoverParts(participantHoverParts, fragment, statusBar));
+        }
+        if (statusBar.hasContent) {
+            fragment.appendChild(statusBar.hoverElement);
+        }
+        this._renderDisposable = disposables;
+        // show
+        if (fragment.hasChildNodes()) {
+            if (forceShowAtRange) {
+                this._showAt(forceShowAtRange.getStartPosition(), forceShowAtRange, this._shouldFocus);
             }
             else {
-                if (msg instanceof MarkerHover) {
-                    markerMessages.push(msg);
-                    isEmptyHoverContent = false;
-                }
-                else {
-                    msg.contents
-                        .filter(contents => !isEmptyMarkdownString(contents))
-                        .forEach(contents => {
-                        const markdownHoverElement = $('div.hover-row.markdown-hover');
-                        const hoverContentsElement = dom.append(markdownHoverElement, $('div.hover-contents'));
-                        const renderer = markdownDisposeables.add(new MarkdownRenderer(this._editor, this._modeService, this._openerService));
-                        markdownDisposeables.add(renderer.onDidRenderCodeBlock(() => {
-                            hoverContentsElement.className = 'hover-contents code-hover-contents';
-                            this._hover.onContentsChanged();
-                        }));
-                        const renderedContents = markdownDisposeables.add(renderer.render(contents));
-                        hoverContentsElement.appendChild(renderedContents.element);
-                        fragment.appendChild(markdownHoverElement);
-                        isEmptyHoverContent = false;
-                    });
-                }
+                this._showAt(new Position(anchor.range.startLineNumber, renderColumn), highlightRange, this._shouldFocus);
             }
-        });
-        if (markerMessages.length) {
-            markerMessages.forEach(msg => fragment.appendChild(this.renderMarkerHover(msg)));
-            const markerHoverForStatusbar = markerMessages.length === 1 ? markerMessages[0] : markerMessages.sort((a, b) => MarkerSeverity.compare(a.marker.severity, b.marker.severity))[0];
-            fragment.appendChild(this.renderMarkerStatusbar(markerHoverForStatusbar));
+            this._updateContents(fragment);
         }
-        // show
-        if (!containColorPicker && !isEmptyHoverContent) {
-            this.showAt(new Position(renderRange.startLineNumber, renderColumn), highlightRange, this._shouldFocus);
-            this.updateContents(fragment);
+        if (this._colorPicker) {
+            this._colorPicker.layout();
         }
         this._isChangingDecorations = true;
         this._highlightDecorations = this._editor.deltaDecorations(this._highlightDecorations, highlightRange ? [{
@@ -386,158 +461,14 @@ export class ModesContentHoverWidget extends ContentHoverWidget {
             }] : []);
         this._isChangingDecorations = false;
     }
-    renderMarkerHover(markerHover) {
-        const hoverElement = $('div.hover-row');
-        const markerElement = dom.append(hoverElement, $('div.marker.hover-contents'));
-        const { source, message, code, relatedInformation } = markerHover.marker;
-        this._editor.applyFontInfo(markerElement);
-        const messageElement = dom.append(markerElement, $('span'));
-        messageElement.style.whiteSpace = 'pre-wrap';
-        messageElement.innerText = message;
-        if (source || code) {
-            // Code has link
-            if (code && typeof code !== 'string') {
-                const sourceAndCodeElement = $('span');
-                if (source) {
-                    const sourceElement = dom.append(sourceAndCodeElement, $('span'));
-                    sourceElement.innerText = source;
-                }
-                this._codeLink = dom.append(sourceAndCodeElement, $('a.code-link'));
-                this._codeLink.setAttribute('href', code.target.toString());
-                this._codeLink.onclick = (e) => {
-                    this._openerService.open(code.target);
-                    e.preventDefault();
-                    e.stopPropagation();
-                };
-                const codeElement = dom.append(this._codeLink, $('span'));
-                codeElement.innerText = code.value;
-                const detailsElement = dom.append(markerElement, sourceAndCodeElement);
-                detailsElement.style.opacity = '0.6';
-                detailsElement.style.paddingLeft = '6px';
-            }
-            else {
-                const detailsElement = dom.append(markerElement, $('span'));
-                detailsElement.style.opacity = '0.6';
-                detailsElement.style.paddingLeft = '6px';
-                detailsElement.innerText = source && code ? `${source}(${code})` : source ? source : `(${code})`;
-            }
-        }
-        if (isNonEmptyArray(relatedInformation)) {
-            for (const { message, resource, startLineNumber, startColumn } of relatedInformation) {
-                const relatedInfoContainer = dom.append(markerElement, $('div'));
-                relatedInfoContainer.style.marginTop = '8px';
-                const a = dom.append(relatedInfoContainer, $('a'));
-                a.innerText = `${basename(resource)}(${startLineNumber}, ${startColumn}): `;
-                a.style.cursor = 'pointer';
-                a.onclick = e => {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    if (this._openerService) {
-                        this._openerService.open(resource.with({ fragment: `${startLineNumber},${startColumn}` }), { fromUserGesture: true }).catch(onUnexpectedError);
-                    }
-                };
-                const messageElement = dom.append(relatedInfoContainer, $('span'));
-                messageElement.innerText = message;
-                this._editor.applyFontInfo(messageElement);
-            }
-        }
-        return hoverElement;
-    }
-    renderMarkerStatusbar(markerHover) {
-        const hoverElement = $('div.hover-row.status-bar');
-        const disposables = new DisposableStore();
-        const actionsElement = dom.append(hoverElement, $('div.actions'));
-        if (markerHover.marker.severity === MarkerSeverity.Error || markerHover.marker.severity === MarkerSeverity.Warning || markerHover.marker.severity === MarkerSeverity.Info) {
-            disposables.add(this._renderAction(actionsElement, {
-                label: nls.localize('peek problem', "Peek Problem"),
-                commandId: NextMarkerAction.ID,
-                run: () => {
-                    this.hide();
-                    MarkerController.get(this._editor).showAtMarker(markerHover.marker);
-                    this._editor.focus();
-                }
-            }));
-        }
-        if (!this._editor.getOption(72 /* readOnly */)) {
-            const quickfixPlaceholderElement = dom.append(actionsElement, $('div'));
-            quickfixPlaceholderElement.style.opacity = '0';
-            quickfixPlaceholderElement.style.transition = 'opacity 0.2s';
-            setTimeout(() => quickfixPlaceholderElement.style.opacity = '1', 200);
-            quickfixPlaceholderElement.textContent = nls.localize('checkingForQuickFixes', "Checking for quick fixes...");
-            disposables.add(toDisposable(() => quickfixPlaceholderElement.remove()));
-            const codeActionsPromise = this.getCodeActions(markerHover.marker);
-            disposables.add(toDisposable(() => codeActionsPromise.cancel()));
-            codeActionsPromise.then(actions => {
-                quickfixPlaceholderElement.style.transition = '';
-                quickfixPlaceholderElement.style.opacity = '1';
-                if (!actions.validActions.length) {
-                    actions.dispose();
-                    quickfixPlaceholderElement.textContent = nls.localize('noQuickFixes', "No quick fixes available");
-                    return;
-                }
-                quickfixPlaceholderElement.remove();
-                let showing = false;
-                disposables.add(toDisposable(() => {
-                    if (!showing) {
-                        actions.dispose();
-                    }
-                }));
-                disposables.add(this._renderAction(actionsElement, {
-                    label: nls.localize('quick fixes', "Quick Fix..."),
-                    commandId: QuickFixAction.Id,
-                    run: (target) => {
-                        showing = true;
-                        const controller = QuickFixController.get(this._editor);
-                        const elementPosition = dom.getDomNodePagePosition(target);
-                        // Hide the hover pre-emptively, otherwise the editor can close the code actions
-                        // context menu as well when using keyboard navigation
-                        this.hide();
-                        controller.showCodeActions(markerCodeActionTrigger, actions, {
-                            x: elementPosition.left + 6,
-                            y: elementPosition.top + elementPosition.height + 6
-                        });
-                    }
-                }));
-            });
-        }
-        this.renderDisposable.value = disposables;
-        return hoverElement;
-    }
-    getCodeActions(marker) {
-        return createCancelablePromise(cancellationToken => {
-            return getCodeActions(this._editor.getModel(), new Range(marker.startLineNumber, marker.startColumn, marker.endLineNumber, marker.endColumn), markerCodeActionTrigger, Progress.None, cancellationToken);
-        });
-    }
-}
+};
 ModesContentHoverWidget.ID = 'editor.contrib.modesContentHoverWidget';
 ModesContentHoverWidget._DECORATION_OPTIONS = ModelDecorationOptions.register({
+    description: 'content-hover-highlight',
     className: 'hoverHighlight'
 });
-function hoverContentsEquals(first, second) {
-    if ((!first && second) || (first && !second) || first.length !== second.length) {
-        return false;
-    }
-    for (let i = 0; i < first.length; i++) {
-        const firstElement = first[i];
-        const secondElement = second[i];
-        if (firstElement instanceof MarkerHover && secondElement instanceof MarkerHover) {
-            return IMarkerData.makeKey(firstElement.marker) === IMarkerData.makeKey(secondElement.marker);
-        }
-        if (firstElement instanceof ColorHover || secondElement instanceof ColorHover) {
-            return false;
-        }
-        if (firstElement instanceof MarkerHover || secondElement instanceof MarkerHover) {
-            return false;
-        }
-        if (!markedStringsEquals(firstElement.contents, secondElement.contents)) {
-            return false;
-        }
-    }
-    return true;
-}
-registerThemingParticipant((theme, collector) => {
-    const linkFg = theme.getColor(textLinkForeground);
-    if (linkFg) {
-        collector.addRule(`.monaco-hover .hover-contents a.code-link span:hover { color: ${linkFg}; }`);
-    }
-});
+ModesContentHoverWidget = __decorate([
+    __param(2, IInstantiationService),
+    __param(3, IKeybindingService)
+], ModesContentHoverWidget);
+export { ModesContentHoverWidget };

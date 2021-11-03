@@ -22,7 +22,7 @@ let ContextViewService = class ContextViewService extends Disposable {
         this.container = layoutService.container;
         this.contextView = this._register(new ContextView(this.container, 1 /* ABSOLUTE */));
         this.layout();
-        this._register(layoutService.onLayout(() => this.layout()));
+        this._register(layoutService.onDidLayout(() => this.layout()));
     }
     // ContextView
     setContainer(container, domPosition) {

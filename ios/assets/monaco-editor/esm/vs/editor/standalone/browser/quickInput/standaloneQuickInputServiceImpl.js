@@ -32,7 +32,7 @@ let EditorScopedQuickInputServiceImpl = class EditorScopedQuickInputServiceImpl 
             _serviceBrand: undefined,
             get container() { return contribution.widget.getDomNode(); },
             get dimension() { return editor.getLayoutInfo(); },
-            get onLayout() { return editor.onDidLayoutChange; },
+            get onDidLayout() { return editor.onDidLayoutChange; },
             focus: () => editor.focus()
         };
     }

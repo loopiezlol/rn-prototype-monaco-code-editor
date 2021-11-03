@@ -7,12 +7,16 @@ import { createStringBuilder } from '../core/stringBuilder.js';
 import { LineDecoration, LineDecorationsNormalizer } from './lineDecorations.js';
 class LinePart {
     constructor(endIndex, type, metadata) {
+        this._linePartBrand = undefined;
         this.endIndex = endIndex;
         this.type = type;
         this.metadata = metadata;
     }
     isWhitespace() {
         return (this.metadata & 1 /* IS_WHITESPACE_MASK */ ? true : false);
+    }
+    isPseudoAfter() {
+        return (this.metadata & 4 /* PSEUDO_AFTER_MASK */ ? true : false);
     }
 }
 export class LineRange {
@@ -35,7 +39,7 @@ export class RenderLineInput {
         this.containsRTL = containsRTL;
         this.fauxIndentLength = fauxIndentLength;
         this.lineTokens = lineTokens;
-        this.lineDecorations = lineDecorations;
+        this.lineDecorations = lineDecorations.sort(LineDecoration.compare);
         this.tabSize = tabSize;
         this.startVisibleColumn = startVisibleColumn;
         this.spaceWidth = spaceWidth;
@@ -102,6 +106,12 @@ export class RenderLineInput {
             && this.sameSelection(other.selectionsOnLine));
     }
 }
+export class DomPosition {
+    constructor(partIndex, charIndex) {
+        this.partIndex = partIndex;
+        this.charIndex = charIndex;
+    }
+}
 /**
  * Provides a both direction mapping between a line's character and its rendered position.
  */
@@ -117,14 +127,18 @@ export class CharacterMapping {
     static getCharIndex(partData) {
         return (partData & 65535 /* CHAR_INDEX_MASK */) >>> 0 /* CHAR_INDEX_OFFSET */;
     }
-    setPartData(charOffset, partIndex, charIndex, partAbsoluteOffset) {
-        let partData = ((partIndex << 16 /* PART_INDEX_OFFSET */)
+    setColumnInfo(column, partIndex, charIndex, partAbsoluteOffset) {
+        const partData = ((partIndex << 16 /* PART_INDEX_OFFSET */)
             | (charIndex << 0 /* CHAR_INDEX_OFFSET */)) >>> 0;
-        this._data[charOffset] = partData;
-        this._absoluteOffsets[charOffset] = partAbsoluteOffset + charIndex;
+        this._data[column - 1] = partData;
+        this._absoluteOffsets[column - 1] = partAbsoluteOffset + charIndex;
     }
-    getAbsoluteOffsets() {
-        return this._absoluteOffsets;
+    getAbsoluteOffset(column) {
+        if (this._absoluteOffsets.length === 0) {
+            // No characters on this line
+            return 0;
+        }
+        return this._absoluteOffsets[column - 1];
     }
     charOffsetToPartData(charOffset) {
         if (this.length === 0) {
@@ -137,6 +151,16 @@ export class CharacterMapping {
             return this._data[this.length - 1];
         }
         return this._data[charOffset];
+    }
+    getDomPosition(column) {
+        const partData = this.charOffsetToPartData(column - 1);
+        const partIndex = CharacterMapping.getPartIndex(partData);
+        const charIndex = CharacterMapping.getCharIndex(partData);
+        return new DomPosition(partIndex, charIndex);
+    }
+    getColumn(domPosition, partLength) {
+        const charOffset = this.partDataToCharOffset(domPosition.partIndex, partLength, domPosition.charIndex);
+        return charOffset + 1;
     }
     partDataToCharOffset(partIndex, partLength, charIndex) {
         if (this.length === 0) {
@@ -191,6 +215,7 @@ export class CharacterMapping {
 }
 export class RenderLineOutput {
     constructor(characterMapping, containsRTL, containsForeignElements) {
+        this._renderLineOutputBrand = undefined;
         this.characterMapping = characterMapping;
         this.containsRTL = containsRTL;
         this.containsForeignElements = containsForeignElements;
@@ -198,31 +223,35 @@ export class RenderLineOutput {
 }
 export function renderViewLine(input, sb) {
     if (input.lineContent.length === 0) {
-        let containsForeignElements = 0 /* None */;
-        let content = '<span><span></span></span>';
         if (input.lineDecorations.length > 0) {
             // This line is empty, but it contains inline decorations
-            const beforeClassNames = [];
-            const afterClassNames = [];
-            for (let i = 0, len = input.lineDecorations.length; i < len; i++) {
-                const lineDecoration = input.lineDecorations[i];
-                if (lineDecoration.type === 1 /* Before */) {
-                    beforeClassNames.push(input.lineDecorations[i].className);
-                    containsForeignElements |= 1 /* Before */;
-                }
-                if (lineDecoration.type === 2 /* After */) {
-                    afterClassNames.push(input.lineDecorations[i].className);
-                    containsForeignElements |= 2 /* After */;
+            sb.appendASCIIString(`<span>`);
+            let beforeCount = 0;
+            let afterCount = 0;
+            let containsForeignElements = 0 /* None */;
+            for (const lineDecoration of input.lineDecorations) {
+                if (lineDecoration.type === 1 /* Before */ || lineDecoration.type === 2 /* After */) {
+                    sb.appendASCIIString(`<span class="`);
+                    sb.appendASCIIString(lineDecoration.className);
+                    sb.appendASCIIString(`"></span>`);
+                    if (lineDecoration.type === 1 /* Before */) {
+                        containsForeignElements |= 1 /* Before */;
+                        beforeCount++;
+                    }
+                    if (lineDecoration.type === 2 /* After */) {
+                        containsForeignElements |= 2 /* After */;
+                        afterCount++;
+                    }
                 }
             }
-            if (containsForeignElements !== 0 /* None */) {
-                const beforeSpan = (beforeClassNames.length > 0 ? `<span class="${beforeClassNames.join(' ')}"></span>` : ``);
-                const afterSpan = (afterClassNames.length > 0 ? `<span class="${afterClassNames.join(' ')}"></span>` : ``);
-                content = `<span>${beforeSpan}${afterSpan}</span>`;
-            }
+            sb.appendASCIIString(`</span>`);
+            const characterMapping = new CharacterMapping(1, beforeCount + afterCount);
+            characterMapping.setColumnInfo(1, beforeCount, 0, 0);
+            return new RenderLineOutput(characterMapping, false, containsForeignElements);
         }
-        sb.appendASCIIString(content);
-        return new RenderLineOutput(new CharacterMapping(0, 0), false, containsForeignElements);
+        // completely empty line
+        sb.appendASCIIString('<span><span></span></span>');
+        return new RenderLineOutput(new CharacterMapping(0, 0), false, 0 /* None */);
     }
     return _renderLine(resolveRenderLineInput(input), sb);
 }
@@ -327,7 +356,7 @@ function transformAndRemoveOverflowing(tokens, fauxIndentLength, len) {
     return result;
 }
 /**
- * See https://github.com/Microsoft/vscode/issues/6885.
+ * See https://github.com/microsoft/vscode/issues/6885.
  * It appears that having very large spans causes very slow reading of character positions.
  * So here we try to avoid that.
  */
@@ -505,6 +534,9 @@ function _applyRenderWhitespace(input, lineContent, len, tokens) {
                 tokenType = tokens[tokenIndex].type;
                 tokenEndIndex = tokens[tokenIndex].endIndex;
             }
+            else {
+                break;
+            }
         }
     }
     let generateWhitespace = false;
@@ -579,14 +611,11 @@ function _applyInlineDecorations(lineContent, len, tokens, _lineDecorations) {
     }
     const lastTokenEndIndex = tokens[tokens.length - 1].endIndex;
     if (lineDecorationIndex < lineDecorationsLen && lineDecorations[lineDecorationIndex].startOffset === lastTokenEndIndex) {
-        let classNames = [];
-        let metadata = 0;
         while (lineDecorationIndex < lineDecorationsLen && lineDecorations[lineDecorationIndex].startOffset === lastTokenEndIndex) {
-            classNames.push(lineDecorations[lineDecorationIndex].className);
-            metadata |= lineDecorations[lineDecorationIndex].metadata;
+            const lineDecoration = lineDecorations[lineDecorationIndex];
+            result[resultLen++] = new LinePart(lastResultEndIndex, lineDecoration.className, lineDecoration.metadata);
             lineDecorationIndex++;
         }
-        result[resultLen++] = new LinePart(lastResultEndIndex, classNames.join(' '), metadata);
     }
     return result;
 }
@@ -611,6 +640,7 @@ function _renderLine(input, sb) {
     const renderWhitespace = input.renderWhitespace;
     const renderControlCharacters = input.renderControlCharacters;
     const characterMapping = new CharacterMapping(len + 1, parts.length);
+    let lastCharacterMappingDefined = false;
     let charIndex = 0;
     let visibleColumn = startVisibleColumn;
     let charOffsetInPart = 0;
@@ -630,7 +660,7 @@ function _renderLine(input, sb) {
         const partType = part.type;
         const partRendersWhitespace = (renderWhitespace !== 0 /* None */ && part.isWhitespace());
         const partRendersWhitespaceWithWidth = partRendersWhitespace && !fontIsMonospace && (partType === 'mtkw' /*only whitespace*/ || !containsForeignElements);
-        const partIsEmptyAndHasPseudoAfter = (charIndex === partEndIndex && part.metadata === 4 /* PSEUDO_AFTER */);
+        const partIsEmptyAndHasPseudoAfter = (charIndex === partEndIndex && part.isPseudoAfter());
         charOffsetInPart = 0;
         sb.appendASCIIString('<span class="');
         sb.appendASCIIString(partRendersWhitespaceWithWidth ? 'mtkz' : partType);
@@ -656,7 +686,7 @@ function _renderLine(input, sb) {
             }
             sb.appendASCII(62 /* GreaterThan */);
             for (; charIndex < partEndIndex; charIndex++) {
-                characterMapping.setPartData(charIndex, partIndex - partDisplacement, charOffsetInPart, partAbsoluteOffset);
+                characterMapping.setColumnInfo(charIndex + 1, partIndex - partDisplacement, charOffsetInPart, partAbsoluteOffset);
                 partDisplacement = 0;
                 const charCode = lineContent.charCodeAt(charIndex);
                 let charWidth;
@@ -687,7 +717,7 @@ function _renderLine(input, sb) {
             let partContentCnt = 0;
             sb.appendASCII(62 /* GreaterThan */);
             for (; charIndex < partEndIndex; charIndex++) {
-                characterMapping.setPartData(charIndex, partIndex - partDisplacement, charOffsetInPart, partAbsoluteOffset);
+                characterMapping.setColumnInfo(charIndex + 1, partIndex - partDisplacement, charOffsetInPart, partAbsoluteOffset);
                 partDisplacement = 0;
                 const charCode = lineContent.charCodeAt(charIndex);
                 let producedCharacters = 1;
@@ -713,7 +743,13 @@ function _renderLine(input, sb) {
                         sb.appendASCIIString('&amp;');
                         break;
                     case 0 /* Null */:
-                        sb.appendASCIIString('&#00;');
+                        if (renderControlCharacters) {
+                            // See https://unicode-table.com/en/blocks/control-pictures/
+                            sb.write1(9216);
+                        }
+                        else {
+                            sb.appendASCIIString('&#00;');
+                        }
                         break;
                     case 65279 /* UTF8_BOM */:
                     case 8232 /* LINE_SEPARATOR */:
@@ -725,8 +761,13 @@ function _renderLine(input, sb) {
                         if (strings.isFullWidthCharacter(charCode)) {
                             charWidth++;
                         }
+                        // See https://unicode-table.com/en/blocks/control-pictures/
                         if (renderControlCharacters && charCode < 32) {
                             sb.write1(9216 + charCode);
+                        }
+                        else if (renderControlCharacters && charCode === 127) {
+                            // DEL
+                            sb.write1(9249);
                         }
                         else {
                             sb.write1(charCode);
@@ -746,11 +787,17 @@ function _renderLine(input, sb) {
         else {
             partDisplacement = 0;
         }
+        if (charIndex >= len && !lastCharacterMappingDefined && part.isPseudoAfter()) {
+            lastCharacterMappingDefined = true;
+            characterMapping.setColumnInfo(charIndex + 1, partIndex, charOffsetInPart, partAbsoluteOffset);
+        }
         sb.appendASCIIString('</span>');
     }
-    // When getting client rects for the last character, we will position the
-    // text range at the end of the span, insteaf of at the beginning of next span
-    characterMapping.setPartData(len, parts.length - 1, charOffsetInPart, partAbsoluteOffset);
+    if (!lastCharacterMappingDefined) {
+        // When getting client rects for the last character, we will position the
+        // text range at the end of the span, insteaf of at the beginning of next span
+        characterMapping.setColumnInfo(len + 1, parts.length - 1, charOffsetInPart, partAbsoluteOffset);
+    }
     if (isOverflowing) {
         sb.appendASCIIString('<span>&hellip;</span>');
     }

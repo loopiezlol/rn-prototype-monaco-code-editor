@@ -2,13 +2,13 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-import { OverviewRulerLane } from '../../common/model.js';
-import { themeColorFromId } from '../../../platform/theme/common/themeService.js';
-import { overviewRulerRangeHighlight } from '../../common/view/editorColorRegistry.js';
-import { DisposableStore, toDisposable, MutableDisposable } from '../../../base/common/lifecycle.js';
-import { isDiffEditor, getCodeEditor } from '../../browser/editorBrowser.js';
-import { withNullAsUndefined } from '../../../base/common/types.js';
 import { once } from '../../../base/common/functional.js';
+import { DisposableStore, MutableDisposable, toDisposable } from '../../../base/common/lifecycle.js';
+import { withNullAsUndefined } from '../../../base/common/types.js';
+import { getCodeEditor, isDiffEditor } from '../../browser/editorBrowser.js';
+import { OverviewRulerLane } from '../../common/model.js';
+import { overviewRulerRangeHighlight } from '../../common/view/editorColorRegistry.js';
+import { themeColorFromId } from '../../../platform/theme/common/themeService.js';
 /**
  * A reusable quick access provider for the editor with support
  * for adding decorations for navigating in the currently active file
@@ -46,6 +46,7 @@ export class AbstractEditorNavigationQuickAccessProvider {
         // With text control
         const editor = this.activeTextEditorControl;
         if (editor && this.canProvideWithTextEditor(editor)) {
+            const context = { editor };
             // Restore any view state if this picker was closed
             // without actually going to a line
             const codeEditor = getCodeEditor(editor);
@@ -58,16 +59,17 @@ export class AbstractEditorNavigationQuickAccessProvider {
                 disposables.add(codeEditor.onDidChangeCursorPosition(() => {
                     lastKnownEditorViewState = withNullAsUndefined(editor.saveViewState());
                 }));
-                disposables.add(once(token.onCancellationRequested)(() => {
+                context.restoreViewState = () => {
                     if (lastKnownEditorViewState && editor === this.activeTextEditorControl) {
                         editor.restoreViewState(lastKnownEditorViewState);
                     }
-                }));
+                };
+                disposables.add(once(token.onCancellationRequested)(() => { var _a; return (_a = context.restoreViewState) === null || _a === void 0 ? void 0 : _a.call(context); }));
             }
             // Clean up decorations on dispose
             disposables.add(toDisposable(() => this.clearDecorations(editor)));
             // Ask subclass for entries
-            disposables.add(this.provideWithTextEditor(editor, picker, token));
+            disposables.add(this.provideWithTextEditor(context, picker, token));
         }
         // Without text control
         else {
@@ -81,7 +83,7 @@ export class AbstractEditorNavigationQuickAccessProvider {
     canProvideWithTextEditor(editor) {
         return true;
     }
-    gotoLocation(editor, options) {
+    gotoLocation({ editor }, options) {
         editor.setSelection(options.range);
         editor.revealRangeInCenter(options.range, 0 /* Smooth */);
         if (!options.preserveFocus) {
@@ -90,7 +92,8 @@ export class AbstractEditorNavigationQuickAccessProvider {
     }
     getModel(editor) {
         var _a;
-        return isDiffEditor(editor) ? (_a = editor.getModel()) === null || _a === void 0 ? void 0 : _a.modified :
+        return isDiffEditor(editor) ?
+            (_a = editor.getModel()) === null || _a === void 0 ? void 0 : _a.modified :
             editor.getModel();
     }
     addDecorations(editor, range) {
@@ -108,6 +111,7 @@ export class AbstractEditorNavigationQuickAccessProvider {
                 {
                     range,
                     options: {
+                        description: 'quick-access-range-highlight',
                         className: 'rangeHighlight',
                         isWholeLine: true
                     }
@@ -116,6 +120,7 @@ export class AbstractEditorNavigationQuickAccessProvider {
                 {
                     range,
                     options: {
+                        description: 'quick-access-range-highlight-overview',
                         overviewRuler: {
                             color: themeColorFromId(overviewRulerRangeHighlight),
                             position: OverviewRulerLane.Full

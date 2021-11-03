@@ -2,7 +2,6 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-import * as nls from '../../../nls.js';
 import { KeyChord } from '../../../base/common/keyCodes.js';
 import { CoreEditingCommands } from '../../browser/controller/coreCommands.js';
 import { EditorAction, registerEditorAction } from '../../browser/editorExtensions.js';
@@ -17,6 +16,7 @@ import { EditorContextKeys } from '../../common/editorContextKeys.js';
 import { CopyLinesCommand } from './copyLinesCommand.js';
 import { MoveLinesCommand } from './moveLinesCommand.js';
 import { SortLinesCommand } from './sortLinesCommand.js';
+import * as nls from '../../../nls.js';
 import { MenuId } from '../../../platform/actions/common/actions.js';
 // copy lines
 class AbstractCopyLinesAction extends EditorAction {
@@ -49,10 +49,7 @@ class AbstractCopyLinesAction extends EditorAction {
         }
         const commands = [];
         for (const selection of selections) {
-            if (selection.ignore) {
-                continue;
-            }
-            commands.push(new CopyLinesCommand(selection.selection, this.down));
+            commands.push(new CopyLinesCommand(selection.selection, this.down, selection.ignore));
         }
         editor.pushUndoStop();
         editor.executeCommands(this.id, commands);
@@ -148,7 +145,7 @@ class AbstractMoveLinesAction extends EditorAction {
     run(_accessor, editor) {
         let commands = [];
         let selections = editor.getSelections() || [];
-        const autoIndent = editor.getOption(8 /* autoIndent */);
+        const autoIndent = editor.getOption(9 /* autoIndent */);
         for (const selection of selections) {
             commands.push(new MoveLinesCommand(selection, this.down, autoIndent));
         }
@@ -800,35 +797,34 @@ export class TransposeAction extends EditorAction {
 }
 export class AbstractCaseAction extends EditorAction {
     run(_accessor, editor) {
-        let selections = editor.getSelections();
+        const selections = editor.getSelections();
         if (selections === null) {
             return;
         }
-        let model = editor.getModel();
+        const model = editor.getModel();
         if (model === null) {
             return;
         }
-        let wordSeparators = editor.getOption(105 /* wordSeparators */);
-        let commands = [];
-        for (let i = 0, len = selections.length; i < len; i++) {
-            let selection = selections[i];
+        const wordSeparators = editor.getOption(115 /* wordSeparators */);
+        const textEdits = [];
+        for (const selection of selections) {
             if (selection.isEmpty()) {
-                let cursor = selection.getStartPosition();
+                const cursor = selection.getStartPosition();
                 const word = editor.getConfiguredWordAtPosition(cursor);
                 if (!word) {
                     continue;
                 }
-                let wordRange = new Range(cursor.lineNumber, word.startColumn, cursor.lineNumber, word.endColumn);
-                let text = model.getValueInRange(wordRange);
-                commands.push(new ReplaceCommandThatPreservesSelection(wordRange, this._modifyText(text, wordSeparators), new Selection(cursor.lineNumber, cursor.column, cursor.lineNumber, cursor.column)));
+                const wordRange = new Range(cursor.lineNumber, word.startColumn, cursor.lineNumber, word.endColumn);
+                const text = model.getValueInRange(wordRange);
+                textEdits.push(EditOperation.replace(wordRange, this._modifyText(text, wordSeparators)));
             }
             else {
-                let text = model.getValueInRange(selection);
-                commands.push(new ReplaceCommandThatPreservesSelection(selection, this._modifyText(text, wordSeparators), selection));
+                const text = model.getValueInRange(selection);
+                textEdits.push(EditOperation.replace(selection, this._modifyText(text, wordSeparators)));
             }
         }
         editor.pushUndoStop();
-        editor.executeCommands(this.id, commands);
+        editor.executeEdits(this.id, textEdits);
         editor.pushUndoStop();
     }
 }
@@ -889,6 +885,53 @@ export class TitleCaseAction extends AbstractCaseAction {
         return title;
     }
 }
+class BackwardsCompatibleRegExp {
+    constructor(_pattern, _flags) {
+        this._pattern = _pattern;
+        this._flags = _flags;
+        this._actual = null;
+        this._evaluated = false;
+    }
+    get() {
+        if (!this._evaluated) {
+            this._evaluated = true;
+            try {
+                this._actual = new RegExp(this._pattern, this._flags);
+            }
+            catch (err) {
+                // this browser does not support this regular expression
+            }
+        }
+        return this._actual;
+    }
+    isSupported() {
+        return (this.get() !== null);
+    }
+}
+export class SnakeCaseAction extends AbstractCaseAction {
+    constructor() {
+        super({
+            id: 'editor.action.transformToSnakecase',
+            label: nls.localize('editor.transformToSnakecase', "Transform to Snake Case"),
+            alias: 'Transform to Snake Case',
+            precondition: EditorContextKeys.writable
+        });
+    }
+    _modifyText(text, wordSeparators) {
+        const regExp1 = SnakeCaseAction.regExp1.get();
+        const regExp2 = SnakeCaseAction.regExp2.get();
+        if (!regExp1 || !regExp2) {
+            // cannot support this
+            return text;
+        }
+        return (text
+            .replace(regExp1, '$1_$2')
+            .replace(regExp2, '$1_$2$3')
+            .toLocaleLowerCase());
+    }
+}
+SnakeCaseAction.regExp1 = new BackwardsCompatibleRegExp('(\\p{Ll})(\\p{Lu})', 'gmu');
+SnakeCaseAction.regExp2 = new BackwardsCompatibleRegExp('(\\p{Lu}|\\p{N})(\\p{Lu})(\\p{Ll})', 'gmu');
 registerEditorAction(CopyLinesUpAction);
 registerEditorAction(CopyLinesDownAction);
 registerEditorAction(DuplicateSelectionAction);
@@ -909,3 +952,6 @@ registerEditorAction(TransposeAction);
 registerEditorAction(UpperCaseAction);
 registerEditorAction(LowerCaseAction);
 registerEditorAction(TitleCaseAction);
+if (SnakeCaseAction.regExp1.isSupported() && SnakeCaseAction.regExp2.isSupported()) {
+    registerEditorAction(SnakeCaseAction);
+}

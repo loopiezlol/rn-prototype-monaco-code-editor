@@ -31,7 +31,7 @@ export function doHash(obj, hashVal) {
             return numberHash(617, hashVal);
     }
 }
-function numberHash(val, initialHashVal) {
+export function numberHash(val, initialHashVal) {
     return (((initialHashVal << 5) - initialHashVal) + val) | 0; // hashVal * 31 + ch, keep as int32
 }
 function booleanHash(b, initialHashVal) {
@@ -74,8 +74,11 @@ function leftPad(value, length, char = '0') {
     }
     return value;
 }
-function toHexString(value, bitsize = 32) {
-    return leftPad((value >>> 0).toString(16), bitsize / 4);
+export function toHexString(bufferOrValue, bitsize = 32) {
+    if (bufferOrValue instanceof ArrayBuffer) {
+        return Array.from(new Uint8Array(bufferOrValue)).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+    return leftPad((bufferOrValue >>> 0).toString(16), bitsize / 4);
 }
 /**
  * A SHA1 implementation that works with strings and does not allocate.

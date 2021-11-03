@@ -3,13 +3,6 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 'use strict';
-var __spreadArrays = (this && this.__spreadArrays) || function () {
-    for (var s = 0, i = 0, il = arguments.length; i < il; i++) s += arguments[i].length;
-    for (var r = Array(s), k = 0, i = 0; i < il; i++)
-        for (var a = arguments[i], j = 0, jl = a.length; j < jl; j++, k++)
-            r[k] = a[j];
-    return r;
-};
 import { TokenType, Scanner } from './cssScanner.js';
 import * as nodes from './cssNodes.js';
 import { ParseError } from './cssErrors.js';
@@ -39,6 +32,9 @@ var Parser = /** @class */ (function () {
     };
     Parser.prototype.peek = function (type) {
         return type === this.token.type;
+    };
+    Parser.prototype.peekOne = function (types) {
+        return types.indexOf(this.token.type) !== -1;
     };
     Parser.prototype.peekRegExp = function (type, regEx) {
         if (type !== this.token.type) {
@@ -304,33 +300,14 @@ var Parser = /** @class */ (function () {
         return this._parseBody(node, this._parseRuleSetDeclaration.bind(this));
     };
     Parser.prototype._parseRuleSetDeclarationAtStatement = function () {
-        return this._parseAtApply()
-            || this._parseUnknownAtRule();
+        return this._parseUnknownAtRule();
     };
     Parser.prototype._parseRuleSetDeclaration = function () {
         // https://www.w3.org/TR/css-syntax-3/#consume-a-list-of-declarations0
         if (this.peek(TokenType.AtKeyword)) {
             return this._parseRuleSetDeclarationAtStatement();
         }
-        return this._tryParseCustomPropertyDeclaration()
-            || this._parseDeclaration();
-    };
-    /**
-     * Parses declarations like:
-     *   @apply --my-theme;
-     *
-     * Follows https://tabatkins.github.io/specs/css-apply-rule/#using
-     */
-    Parser.prototype._parseAtApply = function () {
-        if (!this.peekKeyword('@apply')) {
-            return null;
-        }
-        var node = this.create(nodes.AtApplyRule);
-        this.consumeToken();
-        if (!node.setIdentifier(this._parseIdent([nodes.ReferenceType.Variable]))) {
-            return this.finish(node, ParseError.IdentifierExpected);
-        }
-        return this.finish(node);
+        return this._parseDeclaration();
     };
     Parser.prototype._needsSemicolonAfter = function (node) {
         switch (node.type) {
@@ -411,14 +388,17 @@ var Parser = /** @class */ (function () {
         }
         return hasContent ? this.finish(node) : null;
     };
-    Parser.prototype._parseDeclaration = function (resyncStopTokens) {
+    Parser.prototype._parseDeclaration = function (stopTokens) {
+        var custonProperty = this._tryParseCustomPropertyDeclaration(stopTokens);
+        if (custonProperty) {
+            return custonProperty;
+        }
         var node = this.create(nodes.Declaration);
         if (!node.setProperty(this._parseProperty())) {
             return null;
         }
         if (!this.accept(TokenType.Colon)) {
-            var stopTokens = resyncStopTokens ? __spreadArrays(resyncStopTokens, [TokenType.SemiColon]) : [TokenType.SemiColon];
-            return this.finish(node, ParseError.ColonExpected, [TokenType.Colon], stopTokens);
+            return this.finish(node, ParseError.ColonExpected, [TokenType.Colon], stopTokens || [TokenType.SemiColon]);
         }
         if (this.prevToken) {
             node.colonPosition = this.prevToken.offset;
@@ -432,7 +412,7 @@ var Parser = /** @class */ (function () {
         }
         return this.finish(node);
     };
-    Parser.prototype._tryParseCustomPropertyDeclaration = function () {
+    Parser.prototype._tryParseCustomPropertyDeclaration = function (stopTokens) {
         if (!this.peekRegExp(TokenType.Ident, /^--/)) {
             return null;
         }
@@ -466,14 +446,14 @@ var Parser = /** @class */ (function () {
         var expression = this._parseExpr();
         if (expression && !expression.isErroneous(true)) {
             this._parsePrio();
-            if (this.peek(TokenType.SemiColon)) {
+            if (this.peekOne(stopTokens || [TokenType.SemiColon])) {
                 node.setValue(expression);
                 node.semicolonPosition = this.token.offset; // not part of the declaration, but useful information for code assist
                 return this.finish(node);
             }
         }
         this.restoreAtMark(mark);
-        node.addChild(this._parseCustomPropertyValue());
+        node.addChild(this._parseCustomPropertyValue(stopTokens));
         node.addChild(this._parsePrio());
         if (isDefined(node.colonPosition) && this.token.offset === node.colonPosition + 1) {
             return this.finish(node, ParseError.PropertyValueExpected);
@@ -491,9 +471,12 @@ var Parser = /** @class */ (function () {
      * terminators like semicolons and !important directives (when not inside
      * of delimitors).
      */
-    Parser.prototype._parseCustomPropertyValue = function () {
+    Parser.prototype._parseCustomPropertyValue = function (stopTokens) {
+        var _this = this;
+        if (stopTokens === void 0) { stopTokens = [TokenType.CurlyR]; }
         var node = this.create(nodes.Node);
         var isTopLevel = function () { return curlyDepth === 0 && parensDepth === 0 && bracketsDepth === 0; };
+        var onStopToken = function () { return stopTokens.indexOf(_this.token.type) !== -1; };
         var curlyDepth = 0;
         var parensDepth = 0;
         var bracketsDepth = 0;
@@ -519,7 +502,7 @@ var Parser = /** @class */ (function () {
                     if (curlyDepth < 0) {
                         // The property value has been terminated without a semicolon, and
                         // this is the last declaration in the ruleset.
-                        if (parensDepth === 0 && bracketsDepth === 0) {
+                        if (onStopToken() && parensDepth === 0 && bracketsDepth === 0) {
                             break done;
                         }
                         return this.finish(node, ParseError.LeftCurlyExpected);
@@ -531,6 +514,9 @@ var Parser = /** @class */ (function () {
                 case TokenType.ParenthesisR:
                     parensDepth--;
                     if (parensDepth < 0) {
+                        if (onStopToken() && bracketsDepth === 0 && curlyDepth === 0) {
+                            break done;
+                        }
                         return this.finish(node, ParseError.LeftParenthesisExpected);
                     }
                     break;
@@ -561,12 +547,12 @@ var Parser = /** @class */ (function () {
         }
         return this.finish(node);
     };
-    Parser.prototype._tryToParseDeclaration = function () {
+    Parser.prototype._tryToParseDeclaration = function (stopTokens) {
         var mark = this.mark();
         if (this._parseProperty() && this.accept(TokenType.Colon)) {
             // looks like a declaration, go ahead
             this.restoreAtMark(mark);
-            return this._parseDeclaration();
+            return this._parseDeclaration(stopTokens);
         }
         this.restoreAtMark(mark);
         return null;
@@ -753,7 +739,7 @@ var Parser = /** @class */ (function () {
             if (this.prevToken) {
                 node.lParent = this.prevToken.offset;
             }
-            if (!node.addChild(this._tryToParseDeclaration())) {
+            if (!node.addChild(this._tryToParseDeclaration([TokenType.ParenthesisR]))) {
                 if (!this._parseSupportsCondition()) {
                     return this.finish(node, ParseError.ConditionExpected);
                 }
@@ -1225,13 +1211,11 @@ var Parser = /** @class */ (function () {
             return null;
         }
         // optional, support ::
-        if (this.accept(TokenType.Colon) && this.hasWhitespace()) {
-            this.markError(node, ParseError.IdentifierExpected);
+        this.accept(TokenType.Colon);
+        if (this.hasWhitespace() || !node.addChild(this._parseIdent())) {
+            return this.finish(node, ParseError.IdentifierExpected);
         }
-        if (!node.addChild(this._parseIdent())) {
-            this.markError(node, ParseError.IdentifierExpected);
-        }
-        return node;
+        return this.finish(node);
     };
     Parser.prototype._tryParsePrio = function () {
         var mark = this.mark();

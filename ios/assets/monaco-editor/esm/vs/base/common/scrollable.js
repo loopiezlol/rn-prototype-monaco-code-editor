@@ -6,6 +6,7 @@ import { Emitter } from './event.js';
 import { Disposable } from './lifecycle.js';
 export class ScrollState {
     constructor(width, scrollWidth, scrollLeft, height, scrollHeight, scrollTop) {
+        this._scrollStateBrand = undefined;
         width = width | 0;
         scrollWidth = scrollWidth | 0;
         scrollLeft = scrollLeft | 0;
@@ -55,7 +56,7 @@ export class ScrollState {
     withScrollPosition(update) {
         return new ScrollState(this.width, this.scrollWidth, (typeof update.scrollLeft !== 'undefined' ? update.scrollLeft : this.rawScrollLeft), this.height, this.scrollHeight, (typeof update.scrollTop !== 'undefined' ? update.scrollTop : this.rawScrollTop));
     }
-    createScrollEvent(previous) {
+    createScrollEvent(previous, inSmoothScrolling) {
         const widthChanged = (this.width !== previous.width);
         const scrollWidthChanged = (this.scrollWidth !== previous.scrollWidth);
         const scrollLeftChanged = (this.scrollLeft !== previous.scrollLeft);
@@ -63,6 +64,7 @@ export class ScrollState {
         const scrollHeightChanged = (this.scrollHeight !== previous.scrollHeight);
         const scrollTopChanged = (this.scrollTop !== previous.scrollTop);
         return {
+            inSmoothScrolling: inSmoothScrolling,
             oldWidth: previous.width,
             oldScrollWidth: previous.scrollWidth,
             oldScrollLeft: previous.scrollLeft,
@@ -87,6 +89,7 @@ export class ScrollState {
 export class Scrollable extends Disposable {
     constructor(smoothScrollDuration, scheduleAtNextAnimationFrame) {
         super();
+        this._scrollableBrand = undefined;
         this._onScroll = this._register(new Emitter());
         this.onScroll = this._onScroll.event;
         this._smoothScrollDuration = smoothScrollDuration;
@@ -112,7 +115,7 @@ export class Scrollable extends Disposable {
     }
     setScrollDimensions(dimensions, useRawScrollPositions) {
         const newState = this._state.withScrollDimensions(dimensions, useRawScrollPositions);
-        this._setState(newState);
+        this._setState(newState, Boolean(this._smoothScrolling));
         // Validate outstanding animated scroll position target
         if (this._smoothScrolling) {
             this._smoothScrolling.acceptScrollDimensions(this._state);
@@ -143,9 +146,9 @@ export class Scrollable extends Disposable {
             this._smoothScrolling.dispose();
             this._smoothScrolling = null;
         }
-        this._setState(newState);
+        this._setState(newState, false);
     }
-    setScrollPositionSmooth(update) {
+    setScrollPositionSmooth(update, reuseAnimation) {
         if (this._smoothScrollDuration === 0) {
             // Smooth scrolling not supported.
             return this.setScrollPositionNow(update);
@@ -162,7 +165,13 @@ export class Scrollable extends Disposable {
                 // No need to interrupt or extend the current animation since we're going to the same place
                 return;
             }
-            const newSmoothScrolling = this._smoothScrolling.combine(this._state, validTarget, this._smoothScrollDuration);
+            let newSmoothScrolling;
+            if (reuseAnimation) {
+                newSmoothScrolling = new SmoothScrollingOperation(this._smoothScrolling.from, validTarget, this._smoothScrolling.startTime, this._smoothScrolling.duration);
+            }
+            else {
+                newSmoothScrolling = this._smoothScrolling.combine(this._state, validTarget, this._smoothScrollDuration);
+            }
             this._smoothScrolling.dispose();
             this._smoothScrolling = newSmoothScrolling;
         }
@@ -186,7 +195,7 @@ export class Scrollable extends Disposable {
         }
         const update = this._smoothScrolling.tick();
         const newState = this._state.withScrollPosition(update);
-        this._setState(newState);
+        this._setState(newState, true);
         if (!this._smoothScrolling) {
             // Looks like someone canceled the smooth scrolling
             // from the scroll event handler
@@ -206,14 +215,14 @@ export class Scrollable extends Disposable {
             this._performSmoothScrolling();
         });
     }
-    _setState(newState) {
+    _setState(newState, inSmoothScrolling) {
         const oldState = this._state;
         if (oldState.equals(newState)) {
             // no change
             return;
         }
         this._state = newState;
-        this._onScroll.fire(this._state.createScrollEvent(oldState));
+        this._onScroll.fire(this._state.createScrollEvent(oldState, inSmoothScrolling));
     }
 }
 export class SmoothScrollingUpdate {
@@ -242,7 +251,7 @@ export class SmoothScrollingOperation {
         this.from = from;
         this.to = to;
         this.duration = duration;
-        this._startTime = startTime;
+        this.startTime = startTime;
         this.animationFrameDisposable = null;
         this._initAnimations();
     }
@@ -281,7 +290,7 @@ export class SmoothScrollingOperation {
         return this._tick(Date.now());
     }
     _tick(now) {
-        const completion = (now - this._startTime) / this.duration;
+        const completion = (now - this.startTime) / this.duration;
         if (completion < 1) {
             const newScrollLeft = this.scrollLeft(completion);
             const newScrollTop = this.scrollTop(completion);

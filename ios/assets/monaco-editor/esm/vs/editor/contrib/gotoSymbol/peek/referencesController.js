@@ -20,26 +20,26 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import * as nls from '../../../../nls.js';
+import { createCancelablePromise } from '../../../../base/common/async.js';
 import { onUnexpectedError } from '../../../../base/common/errors.js';
-import { dispose, DisposableStore } from '../../../../base/common/lifecycle.js';
+import { KeyChord } from '../../../../base/common/keyCodes.js';
+import { DisposableStore } from '../../../../base/common/lifecycle.js';
 import { ICodeEditorService } from '../../../browser/services/codeEditorService.js';
-import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
-import { IContextKeyService, RawContextKey, ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
+import { Position } from '../../../common/core/position.js';
+import { Range } from '../../../common/core/range.js';
+import { getOuterEditor, PeekContext } from '../../peekView/peekView.js';
+import * as nls from '../../../../nls.js';
+import { CommandsRegistry } from '../../../../platform/commands/common/commands.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { ContextKeyExpr, IContextKeyService, RawContextKey } from '../../../../platform/contextkey/common/contextkey.js';
+import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
+import { KeybindingsRegistry } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
+import { IListService, WorkbenchListFocusContextKey } from '../../../../platform/list/browser/listService.js';
+import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { IStorageService } from '../../../../platform/storage/common/storage.js';
 import { OneReference } from '../referencesModel.js';
-import { ReferenceWidget, LayoutData } from './referencesWidget.js';
-import { Range } from '../../../common/core/range.js';
-import { Position } from '../../../common/core/position.js';
-import { INotificationService } from '../../../../platform/notification/common/notification.js';
-import { createCancelablePromise } from '../../../../base/common/async.js';
-import { getOuterEditor, PeekContext } from '../../peekView/peekView.js';
-import { IListService, WorkbenchListFocusContextKey } from '../../../../platform/list/browser/listService.js';
-import { KeybindingsRegistry } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
-import { KeyChord } from '../../../../base/common/keyCodes.js';
-import { CommandsRegistry } from '../../../../platform/commands/common/commands.js';
-export const ctxReferenceSearchVisible = new RawContextKey('referenceSearchVisible', false);
+import { LayoutData, ReferenceWidget } from './referencesWidget.js';
+export const ctxReferenceSearchVisible = new RawContextKey('referenceSearchVisible', false, nls.localize('referenceSearchVisible', "Whether reference peek is visible, like 'Peek References' or 'Peek Definition'"));
 let ReferencesController = class ReferencesController {
     constructor(_defaultTreeKeyboardSupport, _editor, contextKeyService, _editorService, _notificationService, _instantiationService, _storageService, _configurationService) {
         this._defaultTreeKeyboardSupport = _defaultTreeKeyboardSupport;
@@ -58,10 +58,11 @@ let ReferencesController = class ReferencesController {
         return editor.getContribution(ReferencesController.ID);
     }
     dispose() {
+        var _a, _b;
         this._referenceSearchVisible.reset();
         this._disposables.dispose();
-        dispose(this._widget);
-        dispose(this._model);
+        (_a = this._widget) === null || _a === void 0 ? void 0 : _a.dispose();
+        (_b = this._model) === null || _b === void 0 ? void 0 : _b.dispose();
         this._widget = undefined;
         this._model = undefined;
     }
@@ -92,7 +93,7 @@ let ReferencesController = class ReferencesController {
         this._disposables.add(this._widget.onDidClose(() => {
             modelPromise.cancel();
             if (this._widget) {
-                this._storageService.store(storageKey, JSON.stringify(this._widget.layoutData), 0 /* GLOBAL */);
+                this._storageService.store(storageKey, JSON.stringify(this._widget.layoutData), 0 /* GLOBAL */, 1 /* MACHINE */);
                 this._widget = undefined;
             }
             this.closeWidget();
@@ -107,31 +108,31 @@ let ReferencesController = class ReferencesController {
                     if (event.source !== 'editor' || !this._configurationService.getValue('editor.stablePeek')) {
                         // when stable peek is configured we don't close
                         // the peek window on selecting the editor
-                        this.openReference(element, false);
+                        this.openReference(element, false, false);
                     }
                     break;
                 case 'side':
-                    this.openReference(element, true);
+                    this.openReference(element, true, false);
                     break;
                 case 'goto':
                     if (peekMode) {
                         this._gotoReference(element);
                     }
                     else {
-                        this.openReference(element, false);
+                        this.openReference(element, false, true);
                     }
                     break;
             }
         }));
         const requestId = ++this._requestIdPool;
         modelPromise.then(model => {
+            var _a;
             // still current request? widget still open?
             if (requestId !== this._requestIdPool || !this._widget) {
+                model.dispose();
                 return undefined;
             }
-            if (this._model) {
-                this._model.dispose();
-            }
+            (_a = this._model) === null || _a === void 0 ? void 0 : _a.dispose();
             this._model = model;
             // show widget
             return this._widget.setModel(this._model).then(() => {
@@ -149,7 +150,7 @@ let ReferencesController = class ReferencesController {
                     let selection = this._model.nearestReference(uri, pos);
                     if (selection) {
                         return this._widget.setSelection(selection).then(() => {
-                            if (this._widget && this._editor.getOption(68 /* peekWidgetDefaultFocus */) === 'editor') {
+                            if (this._widget && this._editor.getOption(76 /* peekWidgetDefaultFocus */) === 'editor') {
                                 this._widget.focusOnPreviewEditor();
                             }
                         });
@@ -210,8 +211,9 @@ let ReferencesController = class ReferencesController {
         });
     }
     closeWidget(focusEditor = true) {
-        dispose(this._widget);
-        dispose(this._model);
+        var _a, _b;
+        (_a = this._widget) === null || _a === void 0 ? void 0 : _a.dispose();
+        (_b = this._model) === null || _b === void 0 ? void 0 : _b.dispose();
         this._referenceSearchVisible.reset();
         this._disposables.clear();
         this._widget = undefined;
@@ -257,7 +259,7 @@ let ReferencesController = class ReferencesController {
             onUnexpectedError(err);
         });
     }
-    openReference(ref, sideBySide) {
+    openReference(ref, sideBySide, pinned) {
         // clear stage
         if (!sideBySide) {
             this.closeWidget();
@@ -265,7 +267,7 @@ let ReferencesController = class ReferencesController {
         const { uri, range } = ref;
         this._editorService.openCodeEditor({
             resource: uri,
-            options: { selection: range }
+            options: { selection: range, pinned }
         }, this._editor, sideBySide);
     }
 };
@@ -375,7 +377,7 @@ KeybindingsRegistry.registerCommandAndKeybindingRule({
         const listService = accessor.get(IListService);
         const focus = (_a = listService.lastFocusedList) === null || _a === void 0 ? void 0 : _a.getFocus();
         if (Array.isArray(focus) && focus[0] instanceof OneReference) {
-            withController(accessor, controller => controller.openReference(focus[0], true));
+            withController(accessor, controller => controller.openReference(focus[0], true, true));
         }
     }
 });
@@ -384,6 +386,6 @@ CommandsRegistry.registerCommand('openReference', (accessor) => {
     const listService = accessor.get(IListService);
     const focus = (_a = listService.lastFocusedList) === null || _a === void 0 ? void 0 : _a.getFocus();
     if (Array.isArray(focus) && focus[0] instanceof OneReference) {
-        withController(accessor, controller => controller.openReference(focus[0], false));
+        withController(accessor, controller => controller.openReference(focus[0], false, true));
     }
 });

@@ -1,7 +1,3 @@
-/*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the MIT License. See License.txt in the project root for license information.
- *--------------------------------------------------------------------------------------------*/
 // Avoid circular dependency on EventEmitter by implementing a subset of the interface.
 export class ErrorHandler {
     constructor() {
@@ -87,5 +83,13 @@ export function illegalState(name) {
     }
     else {
         return new Error('Illegal state');
+    }
+}
+export class NotSupportedError extends Error {
+    constructor(message) {
+        super('NotSupported');
+        if (message) {
+            this.message = message;
+        }
     }
 }

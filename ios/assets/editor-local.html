@@ -17,8 +17,19 @@
     "
   >
     <div id="container">
-      <div id="mount-node" class="mount-node" />
+      <div id="mount-node" class="mount-node" contenteditable="true"/>
     </div>
+
+    <script>
+
+      window.selectContents = function selectContents(el) {
+        var sel = window.getSelection();
+        var range = document.createRange();
+        range.selectNodeContents(el);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    </script>
 
     <style>
       #container {
@@ -32,9 +43,9 @@
 
     </style>
 
-    <script src="./monaco-editor/min/vs/loader.js"></script>
+    <script src="./monaco-editor/dev/vs/loader.js"></script>
     <script>
-      require.config({ paths: { vs: "./monaco-editor/min/vs" } });
+      require.config({ paths: { vs: "./monaco-editor/dev/vs" } });
       require(["vs/editor/editor.main"], function () {
         let editor = monaco.editor.create(
           document.getElementById("mount-node"),
@@ -49,6 +60,11 @@
             minimap: { enabled: false },
             scrollBeyondLastLine: false,
             codeLens: false,
+            contextmenu: false,
+            wordWrap: "on",
+            lineNumbersMinChars: 2,
+            folding: false,
+            selectionHighlight: false
           }
         );
         window.editor = editor;

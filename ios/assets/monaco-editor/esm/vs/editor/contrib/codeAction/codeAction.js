@@ -11,33 +11,57 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { equals, flatten, isNonEmptyArray, mergeSort, coalesce } from '../../../base/common/arrays.js';
+import { coalesce, equals, flatten, isNonEmptyArray } from '../../../base/common/arrays.js';
 import { CancellationToken } from '../../../base/common/cancellation.js';
 import { illegalArgument, isPromiseCanceledError, onUnexpectedExternalError } from '../../../base/common/errors.js';
 import { Disposable, DisposableStore } from '../../../base/common/lifecycle.js';
 import { URI } from '../../../base/common/uri.js';
 import { TextModelCancellationTokenSource } from '../../browser/core/editorState.js';
-import { registerLanguageCommand } from '../../browser/editorExtensions.js';
 import { Range } from '../../common/core/range.js';
 import { Selection } from '../../common/core/selection.js';
 import * as modes from '../../common/modes.js';
 import { IModelService } from '../../common/services/modelService.js';
-import { CodeActionKind, filtersAction, mayIncludeActionsOfKind } from './types.js';
+import { CommandsRegistry } from '../../../platform/commands/common/commands.js';
 import { Progress } from '../../../platform/progress/common/progress.js';
+import { CodeActionKind, filtersAction, mayIncludeActionsOfKind } from './types.js';
 export const codeActionCommandId = 'editor.action.codeAction';
 export const refactorCommandId = 'editor.action.refactor';
 export const sourceActionCommandId = 'editor.action.sourceAction';
 export const organizeImportsCommandId = 'editor.action.organizeImports';
 export const fixAllCommandId = 'editor.action.fixAll';
+export class CodeActionItem {
+    constructor(action, provider) {
+        this.action = action;
+        this.provider = provider;
+    }
+    resolve(token) {
+        var _a;
+        return __awaiter(this, void 0, void 0, function* () {
+            if (((_a = this.provider) === null || _a === void 0 ? void 0 : _a.resolveCodeAction) && !this.action.edit) {
+                let action;
+                try {
+                    action = yield this.provider.resolveCodeAction(this.action, token);
+                }
+                catch (err) {
+                    onUnexpectedExternalError(err);
+                }
+                if (action) {
+                    this.action.edit = action.edit;
+                }
+            }
+            return this;
+        });
+    }
+}
 class ManagedCodeActionSet extends Disposable {
     constructor(actions, documentation, disposables) {
         super();
         this.documentation = documentation;
         this._register(disposables);
-        this.allActions = mergeSort([...actions], ManagedCodeActionSet.codeActionsComparator);
-        this.validActions = this.allActions.filter(action => !action.disabled);
+        this.allActions = [...actions].sort(ManagedCodeActionSet.codeActionsComparator);
+        this.validActions = this.allActions.filter(({ action }) => !action.disabled);
     }
-    static codeActionsComparator(a, b) {
+    static codeActionsComparator({ action: a }, { action: b }) {
         if (a.isPreferred && !b.isPreferred) {
             return -1;
         }
@@ -60,7 +84,7 @@ class ManagedCodeActionSet extends Disposable {
         }
     }
     get hasAutoFix() {
-        return this.validActions.some(fix => !!fix.kind && CodeActionKind.QuickFix.contains(new CodeActionKind(fix.kind)) && !!fix.isPreferred);
+        return this.validActions.some(({ action: fix }) => !!fix.kind && CodeActionKind.QuickFix.contains(new CodeActionKind(fix.kind)) && !!fix.isPreferred);
     }
 }
 const emptyCodeActionsResponse = { actions: [], documentation: undefined };
@@ -86,7 +110,10 @@ export function getCodeActions(model, rangeOrSelection, trigger, progress, token
             }
             const filteredActions = ((providedCodeActions === null || providedCodeActions === void 0 ? void 0 : providedCodeActions.actions) || []).filter(action => action && filtersAction(filter, action));
             const documentation = getDocumentation(provider, filteredActions, filter.include);
-            return { actions: filteredActions, documentation };
+            return {
+                actions: filteredActions.map(action => new CodeActionItem(action, provider)),
+                documentation
+            };
         }
         catch (err) {
             if (isPromiseCanceledError(err)) {
@@ -160,9 +187,8 @@ function getDocumentation(provider, providedCodeActions, only) {
     }
     return undefined;
 }
-registerLanguageCommand('_executeCodeActionProvider', function (accessor, args) {
+CommandsRegistry.registerCommand('_executeCodeActionProvider', function (accessor, resource, rangeOrSelection, kind, itemResolveCount) {
     return __awaiter(this, void 0, void 0, function* () {
-        const { resource, rangeOrSelection, kind } = args;
         if (!(resource instanceof URI)) {
             throw illegalArgument();
         }
@@ -178,8 +204,19 @@ registerLanguageCommand('_executeCodeActionProvider', function (accessor, args) 
         if (!validatedRangeOrSelection) {
             throw illegalArgument();
         }
-        const codeActionSet = yield getCodeActions(model, validatedRangeOrSelection, { type: 2 /* Manual */, filter: { includeSourceActions: true, include: kind && kind.value ? new CodeActionKind(kind.value) : undefined } }, Progress.None, CancellationToken.None);
-        setTimeout(() => codeActionSet.dispose(), 100);
-        return codeActionSet.validActions;
+        const include = typeof kind === 'string' ? new CodeActionKind(kind) : undefined;
+        const codeActionSet = yield getCodeActions(model, validatedRangeOrSelection, { type: 1 /* Invoke */, filter: { includeSourceActions: true, include } }, Progress.None, CancellationToken.None);
+        const resolving = [];
+        const resolveCount = Math.min(codeActionSet.validActions.length, typeof itemResolveCount === 'number' ? itemResolveCount : 0);
+        for (let i = 0; i < resolveCount; i++) {
+            resolving.push(codeActionSet.validActions[i].resolve(CancellationToken.None));
+        }
+        try {
+            yield Promise.all(resolving);
+            return codeActionSet.validActions.map(item => item.action);
+        }
+        finally {
+            setTimeout(() => codeActionSet.dispose(), 100);
+        }
     });
 });

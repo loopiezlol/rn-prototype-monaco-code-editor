@@ -68,7 +68,7 @@ var DiagnosticsAdapter = /** @class */ (function () {
             .then(function (diagnostics) {
             var markers = diagnostics.map(function (d) { return toDiagnostics(resource, d); });
             var model = editor.getModel(resource);
-            if (model.getModeId() === languageId) {
+            if (model && model.getModeId() === languageId) {
                 editor.setModelMarkers(model, languageId, markers);
             }
         })
@@ -186,13 +186,16 @@ function toTextEdit(textEdit) {
         text: textEdit.newText
     };
 }
+function toCommand(c) {
+    return c && c.command === 'editor.action.triggerSuggest' ? { id: c.command, title: c.title, arguments: c.arguments } : undefined;
+}
 var CompletionAdapter = /** @class */ (function () {
     function CompletionAdapter(_worker) {
         this._worker = _worker;
     }
     Object.defineProperty(CompletionAdapter.prototype, "triggerCharacters", {
         get: function () {
-            return [' ', ':'];
+            return ['/', '-', ':'];
         },
         enumerable: false,
         configurable: true
@@ -217,6 +220,7 @@ var CompletionAdapter = /** @class */ (function () {
                     filterText: entry.filterText,
                     documentation: entry.documentation,
                     detail: entry.detail,
+                    command: toCommand(entry.command),
                     range: wordRange,
                     kind: toCompletionItemKind(entry.kind)
                 };

@@ -11,15 +11,15 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __param = (this && this.__param) || function (paramIndex, decorator) {
     return function (target, key) { decorator(target, key, paramIndex); }
 };
-import { LRUCache, TernarySearchTree } from '../../../base/common/map.js';
-import { IStorageService, WillSaveStateReason } from '../../../platform/storage/common/storage.js';
-import { completionKindFromString } from '../../common/modes.js';
-import { DisposableStore } from '../../../base/common/lifecycle.js';
 import { RunOnceScheduler } from '../../../base/common/async.js';
-import { createDecorator } from '../../../platform/instantiation/common/instantiation.js';
+import { DisposableStore } from '../../../base/common/lifecycle.js';
+import { LRUCache, TernarySearchTree } from '../../../base/common/map.js';
+import { completionKindFromString } from '../../common/modes.js';
+import { IModeService } from '../../common/services/modeService.js';
 import { IConfigurationService } from '../../../platform/configuration/common/configuration.js';
 import { registerSingleton } from '../../../platform/instantiation/common/extensions.js';
-import { IModeService } from '../../common/services/modeService.js';
+import { createDecorator } from '../../../platform/instantiation/common/instantiation.js';
+import { IStorageService, WillSaveStateReason } from '../../../platform/storage/common/storage.js';
 export class Memory {
     constructor(name) {
         this.name = name;
@@ -64,8 +64,7 @@ export class LRUMemory extends Memory {
         this._seq = 0;
     }
     memorize(model, pos, item) {
-        const { label } = item.completion;
-        const key = `${model.getLanguageIdentifier().language}/${label}`;
+        const key = `${model.getLanguageIdentifier().language}/${item.textLabel}`;
         this._cache.set(key, {
             touch: this._seq++,
             type: item.completion.kind,
@@ -89,7 +88,7 @@ export class LRUMemory extends Memory {
                 // consider only top items
                 break;
             }
-            const key = `${model.getLanguageIdentifier().language}/${items[i].completion.label}`;
+            const key = `${model.getLanguageIdentifier().language}/${items[i].textLabel}`;
             const item = this._cache.peek(key);
             if (item && item.touch > seq && item.type === items[i].completion.kind && item.insertText === items[i].completion.insertText) {
                 seq = item.touch;
@@ -234,7 +233,7 @@ let SuggestMemoryService = class SuggestMemoryService {
             const share = this._configService.getValue('editor.suggest.shareSuggestSelections');
             const scope = share ? 0 /* GLOBAL */ : 1 /* WORKSPACE */;
             const raw = JSON.stringify(this._strategy);
-            this._storageService.store(`${SuggestMemoryService._storagePrefix}/${this._strategy.name}`, raw, scope);
+            this._storageService.store(`${SuggestMemoryService._storagePrefix}/${this._strategy.name}`, raw, scope, 1 /* MACHINE */);
         }
     }
 };

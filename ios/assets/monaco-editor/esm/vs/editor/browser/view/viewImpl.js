@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 import * as dom from '../../../base/browser/dom.js';
+import * as browser from '../../../base/browser/browser.js';
 import { Selection } from '../../common/core/selection.js';
 import { createFastDomNode } from '../../../base/browser/fastDomNode.js';
 import { onUnexpectedError } from '../../../base/common/errors.js';
@@ -48,6 +49,7 @@ export class View extends ViewEventHandler {
         const viewController = new ViewController(configuration, model, userInputEvents, commandDelegate);
         // The view context is passed on to most classes (basically to reduce param. counts in ctors)
         this._context = new ViewContext(configuration, themeService.getColorTheme(), model);
+        this._configPixelRatio = this._context.configuration.options.get(127 /* pixelRatio */);
         // Ensure the view is the first event handler in order to update the layout
         this._context.addEventHandler(this);
         this._register(themeService.onDidColorThemeChange(theme => {
@@ -150,6 +152,9 @@ export class View extends ViewEventHandler {
             focusTextArea: () => {
                 this.focus();
             },
+            dispatchTextAreaEvent: (event) => {
+                this._textAreaHandler.textArea.domNode.dispatchEvent(event);
+            },
             getLastRenderData: () => {
                 const lastViewCursorsRenderData = this._viewCursors.getLastRenderData() || [];
                 const lastTextareaPosition = this._textAreaHandler.getLastRenderData();
@@ -185,7 +190,7 @@ export class View extends ViewEventHandler {
     }
     _applyLayout() {
         const options = this._context.configuration.options;
-        const layoutInfo = options.get(117 /* layoutInfo */);
+        const layoutInfo = options.get(129 /* layoutInfo */);
         this.domNode.setWidth(layoutInfo.width);
         this.domNode.setHeight(layoutInfo.height);
         this._overflowGuardContainer.setWidth(layoutInfo.width);
@@ -195,7 +200,7 @@ export class View extends ViewEventHandler {
     }
     _getEditorClassName() {
         const focused = this._textAreaHandler.isFocused() ? ' focused' : '';
-        return this._context.configuration.options.get(114 /* editorClassName */) + ' ' + getThemeTypeSelector(this._context.theme.type) + focused;
+        return this._context.configuration.options.get(126 /* editorClassName */) + ' ' + getThemeTypeSelector(this._context.theme.type) + focused;
     }
     // --- begin event handlers
     handleEvents(events) {
@@ -203,6 +208,7 @@ export class View extends ViewEventHandler {
         this._scheduleRender();
     }
     onConfigurationChanged(e) {
+        this._configPixelRatio = this._context.configuration.options.get(127 /* pixelRatio */);
         this.domNode.setClassName(this._getEditorClassName());
         this._applyLayout();
         return false;
@@ -229,8 +235,8 @@ export class View extends ViewEventHandler {
         this._context.removeEventHandler(this);
         this._viewLines.dispose();
         // Destroy view parts
-        for (let i = 0, len = this._viewParts.length; i < len; i++) {
-            this._viewParts[i].dispose();
+        for (const viewPart of this._viewParts) {
+            viewPart.dispose();
         }
         super.dispose();
     }
@@ -248,8 +254,7 @@ export class View extends ViewEventHandler {
     }
     _getViewPartsToRender() {
         let result = [], resultLen = 0;
-        for (let i = 0, len = this._viewParts.length; i < len; i++) {
-            const viewPart = this._viewParts[i];
+        for (const viewPart of this._viewParts) {
             if (viewPart.shouldRender()) {
                 result[resultLen++] = viewPart;
             }
@@ -280,14 +285,17 @@ export class View extends ViewEventHandler {
         }
         const renderingContext = new RenderingContext(this._context.viewLayout, viewportData, this._viewLines);
         // Render the rest of the parts
-        for (let i = 0, len = viewPartsToRender.length; i < len; i++) {
-            const viewPart = viewPartsToRender[i];
+        for (const viewPart of viewPartsToRender) {
             viewPart.prepareRender(renderingContext);
         }
-        for (let i = 0, len = viewPartsToRender.length; i < len; i++) {
-            const viewPart = viewPartsToRender[i];
+        for (const viewPart of viewPartsToRender) {
             viewPart.render(renderingContext);
             viewPart.onDidRender();
+        }
+        // Try to detect browser zooming and paint again if necessary
+        if (Math.abs(browser.getPixelRatio() - this._configPixelRatio) > 0.001) {
+            // looks like the pixel ratio has changed
+            this._context.configuration.updatePixelRatio();
         }
     }
     // --- BEGIN CodeEditor helpers
@@ -332,8 +340,7 @@ export class View extends ViewEventHandler {
         if (everything) {
             // Force everything to render...
             this._viewLines.forceShouldRender();
-            for (let i = 0, len = this._viewParts.length; i < len; i++) {
-                const viewPart = this._viewParts[i];
+            for (const viewPart of this._viewParts) {
                 viewPart.forceShouldRender();
             }
         }

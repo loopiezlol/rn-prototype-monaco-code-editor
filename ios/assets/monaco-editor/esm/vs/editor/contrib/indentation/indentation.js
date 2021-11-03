@@ -2,7 +2,6 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-import * as nls from '../../../nls.js';
 import { DisposableStore } from '../../../base/common/lifecycle.js';
 import * as strings from '../../../base/common/strings.js';
 import { EditorAction, registerEditorAction, registerEditorContribution } from '../../browser/editorExtensions.js';
@@ -15,6 +14,7 @@ import { TextModel } from '../../common/model/textModel.js';
 import { LanguageConfigurationRegistry } from '../../common/modes/languageConfigurationRegistry.js';
 import { IModelService } from '../../common/services/modelService.js';
 import * as indentUtils from './indentUtils.js';
+import * as nls from '../../../nls.js';
 import { IQuickInputService } from '../../../platform/quickinput/common/quickInput.js';
 export function getReindentEditOperations(model, startLineNumber, endLineNumber, inheritedIndent) {
     if (model.getLineCount() === 1 && model.getLineMaxColumn(1) === 1) {
@@ -65,7 +65,7 @@ export function getReindentEditOperations(model, startLineNumber, endLineNumber,
             adjustedLineContent = globalIndent + currentLineText.substring(oldIndentation.length);
         }
         if (currentLineText !== adjustedLineContent) {
-            indentEdits.push(EditOperation.replace(new Selection(startLineNumber, 1, startLineNumber, oldIndentation.length + 1), TextModel.normalizeIndentation(globalIndent, indentSize, insertSpaces)));
+            indentEdits.push(EditOperation.replaceMove(new Selection(startLineNumber, 1, startLineNumber, oldIndentation.length + 1), TextModel.normalizeIndentation(globalIndent, indentSize, insertSpaces)));
         }
     }
     else {
@@ -91,7 +91,7 @@ export function getReindentEditOperations(model, startLineNumber, endLineNumber,
             globalIndent = unshiftIndent(globalIndent);
         }
         if (oldIndentation !== idealIndentForNextLine) {
-            indentEdits.push(EditOperation.replace(new Selection(lineNumber, 1, lineNumber, oldIndentation.length + 1), TextModel.normalizeIndentation(idealIndentForNextLine, indentSize, insertSpaces)));
+            indentEdits.push(EditOperation.replaceMove(new Selection(lineNumber, 1, lineNumber, oldIndentation.length + 1), TextModel.normalizeIndentation(idealIndentForNextLine, indentSize, insertSpaces)));
         }
         // calculate idealIndentForNextLine
         if (indentationRules.unIndentedLinePattern && indentationRules.unIndentedLinePattern.test(text)) {
@@ -361,7 +361,7 @@ export class AutoIndentOnPaste {
         // clean up
         this.callOnModel.clear();
         // we are disabled
-        if (this.editor.getOption(8 /* autoIndent */) < 4 /* Full */ || this.editor.getOption(40 /* formatOnPaste */)) {
+        if (this.editor.getOption(9 /* autoIndent */) < 4 /* Full */ || this.editor.getOption(47 /* formatOnPaste */)) {
             return;
         }
         // no model
@@ -384,9 +384,8 @@ export class AutoIndentOnPaste {
         if (!model.isCheapToTokenize(range.getStartPosition().lineNumber)) {
             return;
         }
-        const autoIndent = this.editor.getOption(8 /* autoIndent */);
+        const autoIndent = this.editor.getOption(9 /* autoIndent */);
         const { tabSize, indentSize, insertSpaces } = model.getOptions();
-        this.editor.pushUndoStop();
         let textEdits = [];
         let indentConverter = {
             shiftIndent: (indentation) => {
@@ -485,9 +484,12 @@ export class AutoIndentOnPaste {
                 }
             }
         }
-        let cmd = new AutoIndentOnPasteCommand(textEdits, this.editor.getSelection());
-        this.editor.executeCommand('autoIndentOnPaste', cmd);
-        this.editor.pushUndoStop();
+        if (textEdits.length > 0) {
+            this.editor.pushUndoStop();
+            let cmd = new AutoIndentOnPasteCommand(textEdits, this.editor.getSelection());
+            this.editor.executeCommand('autoIndentOnPaste', cmd);
+            this.editor.pushUndoStop();
+        }
     }
     shouldIgnoreLine(model, lineNumber) {
         model.forceTokenization(lineNumber);

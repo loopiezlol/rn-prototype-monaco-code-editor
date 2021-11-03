@@ -20,34 +20,34 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { localize } from '../../../nls.js';
-import { PickerQuickAccessProvider } from './pickerQuickAccess.js';
+import { toErrorMessage } from '../../../base/common/errorMessage.js';
+import { isPromiseCanceledError } from '../../../base/common/errors.js';
+import { matchesContiguousSubString, matchesPrefix, matchesWords, or } from '../../../base/common/filters.js';
 import { Disposable } from '../../../base/common/lifecycle.js';
-import { or, matchesPrefix, matchesWords, matchesContiguousSubString } from '../../../base/common/filters.js';
-import { withNullAsUndefined } from '../../../base/common/types.js';
 import { LRUCache } from '../../../base/common/map.js';
-import { IStorageService } from '../../storage/common/storage.js';
+import Severity from '../../../base/common/severity.js';
+import { withNullAsUndefined } from '../../../base/common/types.js';
+import { localize } from '../../../nls.js';
+import { ICommandService } from '../../commands/common/commands.js';
 import { IConfigurationService } from '../../configuration/common/configuration.js';
+import { IDialogService } from '../../dialogs/common/dialogs.js';
 import { IInstantiationService } from '../../instantiation/common/instantiation.js';
 import { IKeybindingService } from '../../keybinding/common/keybinding.js';
-import { ICommandService } from '../../commands/common/commands.js';
+import { PickerQuickAccessProvider } from './pickerQuickAccess.js';
+import { IStorageService } from '../../storage/common/storage.js';
 import { ITelemetryService } from '../../telemetry/common/telemetry.js';
-import { isPromiseCanceledError } from '../../../base/common/errors.js';
-import { INotificationService } from '../../notification/common/notification.js';
-import { toErrorMessage } from '../../../base/common/errorMessage.js';
-import { IStorageKeysSyncRegistryService } from '../../userDataSync/common/storageKeys.js';
 let AbstractCommandsQuickAccessProvider = class AbstractCommandsQuickAccessProvider extends PickerQuickAccessProvider {
-    constructor(options, instantiationService, keybindingService, commandService, telemetryService, notificationService) {
+    constructor(options, instantiationService, keybindingService, commandService, telemetryService, dialogService) {
         super(AbstractCommandsQuickAccessProvider.PREFIX, options);
-        this.options = options;
         this.instantiationService = instantiationService;
         this.keybindingService = keybindingService;
         this.commandService = commandService;
         this.telemetryService = telemetryService;
-        this.notificationService = notificationService;
+        this.dialogService = dialogService;
         this.commandsHistory = this._register(this.instantiationService.createInstance(CommandsHistory));
+        this.options = options;
     }
-    getPicks(filter, disposables, token) {
+    _getPicks(filter, disposables, token) {
         return __awaiter(this, void 0, void 0, function* () {
             // Ask subclass for all command picks
             const allCommandPicks = yield this.getCommandPicks(disposables, token);
@@ -133,7 +133,7 @@ let AbstractCommandsQuickAccessProvider = class AbstractCommandsQuickAccessProvi
                         }
                         catch (error) {
                             if (!isPromiseCanceledError(error)) {
-                                this.notificationService.error(localize('canNotRun', "Command '{0}' resulted in an error ({1})", commandPick.label, toErrorMessage(error)));
+                                this.dialogService.show(Severity.Error, localize('canNotRun', "Command '{0}' resulted in an error ({1})", commandPick.label, toErrorMessage(error)));
                             }
                         }
                     }) }));
@@ -149,18 +149,15 @@ AbstractCommandsQuickAccessProvider = __decorate([
     __param(2, IKeybindingService),
     __param(3, ICommandService),
     __param(4, ITelemetryService),
-    __param(5, INotificationService)
+    __param(5, IDialogService)
 ], AbstractCommandsQuickAccessProvider);
 export { AbstractCommandsQuickAccessProvider };
 let CommandsHistory = class CommandsHistory extends Disposable {
-    constructor(storageService, configurationService, storageKeysSyncRegistryService) {
+    constructor(storageService, configurationService) {
         super();
         this.storageService = storageService;
         this.configurationService = configurationService;
         this.configuredCommandsHistoryLength = 0;
-        // opt-in to syncing
-        storageKeysSyncRegistryService.registerStorageKey({ key: CommandsHistory.PREF_KEY_CACHE, version: 1 });
-        storageKeysSyncRegistryService.registerStorageKey({ key: CommandsHistory.PREF_KEY_COUNTER, version: 1 });
         this.updateConfiguration();
         this.load();
         this.registerListeners();
@@ -216,8 +213,8 @@ let CommandsHistory = class CommandsHistory extends Disposable {
         }
         const serializedCache = { usesLRU: true, entries: [] };
         CommandsHistory.cache.forEach((value, key) => serializedCache.entries.push({ key, value }));
-        storageService.store(CommandsHistory.PREF_KEY_CACHE, JSON.stringify(serializedCache), 0 /* GLOBAL */);
-        storageService.store(CommandsHistory.PREF_KEY_COUNTER, CommandsHistory.counter, 0 /* GLOBAL */);
+        storageService.store(CommandsHistory.PREF_KEY_CACHE, JSON.stringify(serializedCache), 0 /* GLOBAL */, 0 /* USER */);
+        storageService.store(CommandsHistory.PREF_KEY_COUNTER, CommandsHistory.counter, 0 /* GLOBAL */, 0 /* USER */);
     }
     static getConfiguredCommandHistoryLength(configurationService) {
         var _a, _b;
@@ -235,7 +232,6 @@ CommandsHistory.PREF_KEY_COUNTER = 'commandPalette.mru.counter';
 CommandsHistory.counter = 1;
 CommandsHistory = __decorate([
     __param(0, IStorageService),
-    __param(1, IConfigurationService),
-    __param(2, IStorageKeysSyncRegistryService)
+    __param(1, IConfigurationService)
 ], CommandsHistory);
 export { CommandsHistory };

@@ -65,15 +65,15 @@ export var language = {
     // The main tokenizer for our languages
     tokenizer: {
         root: [
-            [/@@/],
+            [/@@@@/],
             [/@[^@]/, { token: '@rematch', switchTo: '@razorInSimpleState.root' }],
             [/<!DOCTYPE/, 'metatag.html', '@doctype'],
             [/<!--/, 'comment.html', '@comment'],
-            [/(<)(\w+)(\/>)/, ['delimiter.html', 'tag.html', 'delimiter.html']],
+            [/(<)([\w\-]+)(\/>)/, ['delimiter.html', 'tag.html', 'delimiter.html']],
             [/(<)(script)/, ['delimiter.html', { token: 'tag.html', next: '@script' }]],
             [/(<)(style)/, ['delimiter.html', { token: 'tag.html', next: '@style' }]],
-            [/(<)([:\w]+)/, ['delimiter.html', { token: 'tag.html', next: '@otherTag' }]],
-            [/(<\/)(\w+)/, ['delimiter.html', { token: 'tag.html', next: '@otherTag' }]],
+            [/(<)([:\w\-]+)/, ['delimiter.html', { token: 'tag.html', next: '@otherTag' }]],
+            [/(<\/)([\w\-]+)/, ['delimiter.html', { token: 'tag.html', next: '@otherTag' }]],
             [/</, 'delimiter.html'],
             [/[ \t\r\n]+/],
             [/[^<@]+/] // text
@@ -408,9 +408,9 @@ export var language = {
             [/"([^"]*)"/, 'string.cs'],
             [/'([^']*)'/, 'string.cs'],
             // simple html
-            [/(<)(\w+)(\/>)/, ['delimiter.html', 'tag.html', 'delimiter.html']],
-            [/(<)(\w+)(>)/, ['delimiter.html', 'tag.html', 'delimiter.html']],
-            [/(<\/)(\w+)(>)/, ['delimiter.html', 'tag.html', 'delimiter.html']],
+            [/(<)([\w\-]+)(\/>)/, ['delimiter.html', 'tag.html', 'delimiter.html']],
+            [/(<)([\w\-]+)(>)/, ['delimiter.html', 'tag.html', 'delimiter.html']],
+            [/(<\/)([\w\-]+)(>)/, ['delimiter.html', 'tag.html', 'delimiter.html']],
             // delimiters
             [/[\+\-\*\%\&\|\^\~\!\=\<\>\/\?\;\:\.\,]/, 'delimiter.cs'],
             // numbers

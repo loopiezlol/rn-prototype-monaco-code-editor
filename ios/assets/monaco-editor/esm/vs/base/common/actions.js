@@ -11,8 +11,9 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { Disposable } from './lifecycle.js';
 import { Emitter } from './event.js';
+import { Disposable } from './lifecycle.js';
+import * as nls from '../../nls.js';
 export class Action extends Disposable {
     constructor(id, label = '', cssClass = '', enabled = true, actionCallback) {
         super();
@@ -89,39 +90,42 @@ export class Action extends Disposable {
             this._onDidChange.fire({ checked: value });
         }
     }
-    run(event, _data) {
-        if (this._actionCallback) {
-            return this._actionCallback(event);
-        }
-        return Promise.resolve(true);
+    run(event, data) {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (this._actionCallback) {
+                yield this._actionCallback(event);
+            }
+        });
     }
 }
 export class ActionRunner extends Disposable {
     constructor() {
         super(...arguments);
-        this._onDidBeforeRun = this._register(new Emitter());
-        this.onDidBeforeRun = this._onDidBeforeRun.event;
+        this._onBeforeRun = this._register(new Emitter());
+        this.onBeforeRun = this._onBeforeRun.event;
         this._onDidRun = this._register(new Emitter());
         this.onDidRun = this._onDidRun.event;
     }
     run(action, context) {
         return __awaiter(this, void 0, void 0, function* () {
             if (!action.enabled) {
-                return Promise.resolve(null);
+                return;
             }
-            this._onDidBeforeRun.fire({ action: action });
+            this._onBeforeRun.fire({ action });
+            let error = undefined;
             try {
-                const result = yield this.runAction(action, context);
-                this._onDidRun.fire({ action: action, result: result });
+                yield this.runAction(action, context);
             }
-            catch (error) {
-                this._onDidRun.fire({ action: action, error: error });
+            catch (e) {
+                error = e;
             }
+            this._onDidRun.fire({ action, error });
         });
     }
     runAction(action, context) {
-        const res = context ? action.run(context) : action.run();
-        return Promise.resolve(res);
+        return __awaiter(this, void 0, void 0, function* () {
+            yield action.run(context);
+        });
     }
 }
 export class Separator extends Action {
@@ -132,12 +136,29 @@ export class Separator extends Action {
     }
 }
 Separator.ID = 'vs.actions.separator';
-export class SubmenuAction extends Action {
-    constructor(id, label, _actions, cssClass) {
-        super(id, label, cssClass, true);
-        this._actions = _actions;
+export class SubmenuAction {
+    constructor(id, label, actions, cssClass) {
+        this.tooltip = '';
+        this.enabled = true;
+        this.checked = false;
+        this.id = id;
+        this.label = label;
+        this.class = cssClass;
+        this._actions = actions;
     }
-    get actions() {
-        return Array.isArray(this._actions) ? this._actions : this._actions();
+    get actions() { return this._actions; }
+    dispose() {
+        // there is NOTHING to dispose and the SubmenuAction should
+        // never have anything to dispose as it is a convenience type
+        // to bridge into the rendering world.
+    }
+    run() {
+        return __awaiter(this, void 0, void 0, function* () { });
     }
 }
+export class EmptySubmenuAction extends Action {
+    constructor() {
+        super(EmptySubmenuAction.ID, nls.localize('submenu.empty', '(empty)'), undefined, false);
+    }
+}
+EmptySubmenuAction.ID = 'vs.actions.empty';

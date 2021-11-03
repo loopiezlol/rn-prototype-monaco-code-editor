@@ -3,11 +3,10 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 import * as extpath from './extpath.js';
-import * as paths from './path.js';
-import { URI, uriToFsPath } from './uri.js';
-import { equalsIgnoreCase, compare as strCompare } from './strings.js';
 import { Schemas } from './network.js';
-import { isWindows } from './platform.js';
+import * as paths from './path.js';
+import { compare as strCompare } from './strings.js';
+import { URI, uriToFsPath } from './uri.js';
 export function originalFSPath(uri) {
     return uriToFsPath(uri, true);
 }
@@ -80,29 +79,6 @@ export class ExtUri {
             path: normalizedPath
         });
     }
-    relativePath(from, to) {
-        if (from.scheme !== to.scheme || !isEqualAuthority(from.authority, to.authority)) {
-            return undefined;
-        }
-        if (from.scheme === Schemas.file) {
-            const relativePath = paths.relative(originalFSPath(from), originalFSPath(to));
-            return isWindows ? extpath.toSlashes(relativePath) : relativePath;
-        }
-        let fromPath = from.path || '/', toPath = to.path || '/';
-        if (this._ignorePathCasing(from)) {
-            // make casing of fromPath match toPath
-            let i = 0;
-            for (const len = Math.min(fromPath.length, toPath.length); i < len; i++) {
-                if (fromPath.charCodeAt(i) !== toPath.charCodeAt(i)) {
-                    if (fromPath.charAt(i).toLowerCase() !== toPath.charAt(i).toLowerCase()) {
-                        break;
-                    }
-                }
-            }
-            fromPath = toPath.substr(0, i) + fromPath.substr(i);
-        }
-        return paths.posix.relative(fromPath, toPath);
-    }
     resolvePath(base, path) {
         if (base.scheme === Schemas.file) {
             const newURI = URI.file(paths.resolve(originalFSPath(base), path));
@@ -111,18 +87,10 @@ export class ExtUri {
                 path: newURI.path
             });
         }
-        if (path.indexOf('/') === -1) { // no slashes? it's likely a Windows path
-            path = extpath.toSlashes(path);
-            if (/^[a-zA-Z]:(\/|$)/.test(path)) { // starts with a drive letter
-                path = '/' + path;
-            }
-        }
+        path = extpath.toPosixPath(path); // we allow path to be a windows path
         return base.with({
             path: paths.posix.resolve(base.path, path)
         });
-    }
-    isEqualAuthority(a1, a2) {
-        return a1 === a2 || equalsIgnoreCase(a1, a2);
     }
 }
 /**
@@ -139,9 +107,7 @@ export const basename = extUri.basename.bind(extUri);
 export const dirname = extUri.dirname.bind(extUri);
 export const joinPath = extUri.joinPath.bind(extUri);
 export const normalizePath = extUri.normalizePath.bind(extUri);
-export const relativePath = extUri.relativePath.bind(extUri);
 export const resolvePath = extUri.resolvePath.bind(extUri);
-export const isEqualAuthority = extUri.isEqualAuthority.bind(extUri);
 /**
  * Data URI related helpers.
  */

@@ -11,15 +11,16 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
+import { coalesce } from '../../../base/common/arrays.js';
 import { CancellationToken } from '../../../base/common/cancellation.js';
 import { onUnexpectedExternalError } from '../../../base/common/errors.js';
+import { DisposableStore, isDisposable } from '../../../base/common/lifecycle.js';
+import { assertType } from '../../../base/common/types.js';
 import { URI } from '../../../base/common/uri.js';
 import { Range } from '../../common/core/range.js';
 import { LinkProviderRegistry } from '../../common/modes.js';
 import { IModelService } from '../../common/services/modelService.js';
 import { CommandsRegistry } from '../../../platform/commands/common/commands.js';
-import { isDisposable, Disposable } from '../../../base/common/lifecycle.js';
-import { coalesce } from '../../../base/common/arrays.js';
 export class Link {
     constructor(link, provider) {
         this._link = link;
@@ -60,9 +61,9 @@ export class Link {
         });
     }
 }
-export class LinksList extends Disposable {
+export class LinksList {
     constructor(tuples) {
-        super();
+        this._disposables = new DisposableStore();
         let links = [];
         for (const [list, provider] of tuples) {
             // merge all links
@@ -70,10 +71,14 @@ export class LinksList extends Disposable {
             links = LinksList._union(links, newLinks);
             // register disposables
             if (isDisposable(list)) {
-                this._register(list);
+                this._disposables.add(list);
             }
         }
         this.links = links;
+    }
+    dispose() {
+        this._disposables.dispose();
+        this.links.length = 0;
     }
     static _union(oldLinks, newLinks) {
         // reunite oldLinks with newLinks and remove duplicates
@@ -131,9 +136,10 @@ export function getLinks(model, token) {
     });
 }
 CommandsRegistry.registerCommand('_executeLinkProvider', (accessor, ...args) => __awaiter(void 0, void 0, void 0, function* () {
-    const [uri] = args;
-    if (!(uri instanceof URI)) {
-        return [];
+    let [uri, resolveCount] = args;
+    assertType(uri instanceof URI);
+    if (typeof resolveCount !== 'number') {
+        resolveCount = 0;
     }
     const model = accessor.get(IModelService).getModel(uri);
     if (!model) {
@@ -142,6 +148,10 @@ CommandsRegistry.registerCommand('_executeLinkProvider', (accessor, ...args) => 
     const list = yield getLinks(model, CancellationToken.None);
     if (!list) {
         return [];
+    }
+    // resolve links
+    for (let i = 0; i < Math.min(resolveCount, list.links.length); i++) {
+        yield list.links[i].resolve(CancellationToken.None);
     }
     const result = list.links.slice(0);
     list.dispose();

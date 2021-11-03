@@ -11,18 +11,17 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { ComposedTreeDelegate } from './abstractTree.js';
-import { ObjectTree, CompressibleObjectTree } from './objectTree.js';
-import { TreeError, WeakMapper } from './tree.js';
-import { dispose, DisposableStore } from '../../../common/lifecycle.js';
-import { Emitter, Event } from '../../../common/event.js';
-import { timeout, createCancelablePromise } from '../../../common/async.js';
-import { Iterable } from '../../../common/iterator.js';
 import { ElementsDragAndDropData } from '../list/listView.js';
-import { isPromiseCanceledError, onUnexpectedError } from '../../../common/errors.js';
-import { removeClasses, addClasses } from '../../dom.js';
-import { isFilterResult, getVisibleState } from './indexTreeModel.js';
+import { ComposedTreeDelegate } from './abstractTree.js';
+import { getVisibleState, isFilterResult } from './indexTreeModel.js';
+import { CompressibleObjectTree, ObjectTree } from './objectTree.js';
+import { TreeError, WeakMapper } from './tree.js';
 import { treeItemLoadingIcon } from './treeIcons.js';
+import { createCancelablePromise, Promises, timeout } from '../../../common/async.js';
+import { isPromiseCanceledError, onUnexpectedError } from '../../../common/errors.js';
+import { Emitter, Event } from '../../../common/event.js';
+import { Iterable } from '../../../common/iterator.js';
+import { DisposableStore, dispose } from '../../../common/lifecycle.js';
 function createAsyncDataTreeNode(props) {
     return Object.assign(Object.assign({}, props), { children: [], refreshPromise: undefined, stale: true, slow: false, collapsedByDefault: undefined });
 }
@@ -71,12 +70,13 @@ class AsyncDataTreeRenderer {
     }
     renderTwistie(element, twistieElement) {
         if (element.slow) {
-            addClasses(twistieElement, treeItemLoadingIcon.classNames);
+            twistieElement.classList.add(...treeItemLoadingIcon.classNamesArray);
+            return true;
         }
         else {
-            removeClasses(twistieElement, treeItemLoadingIcon.classNames);
+            twistieElement.classList.remove(...treeItemLoadingIcon.classNamesArray);
+            return false;
         }
-        return false;
     }
     disposeElement(node, index, templateData, height) {
         if (this.renderer.disposeElement) {
@@ -264,7 +264,7 @@ export class AsyncDataTree {
             }
         });
     }
-    _updateChildren(element = this.root.element, recursive = true, rerender = false, viewStateContext) {
+    _updateChildren(element = this.root.element, recursive = true, rerender = false, viewStateContext, options) {
         return __awaiter(this, void 0, void 0, function* () {
             if (typeof this.root.element === 'undefined') {
                 throw new TreeError(this.user, 'Tree input not set');
@@ -274,7 +274,7 @@ export class AsyncDataTree {
                 yield Event.toPromise(this._onDidRender.event);
             }
             const node = this.getDataNode(element);
-            yield this.refreshAndRenderNode(node, recursive, viewStateContext);
+            yield this.refreshAndRenderNode(node, recursive, viewStateContext, options);
             if (rerender) {
                 try {
                     this.tree.rerender(node);
@@ -354,10 +354,10 @@ export class AsyncDataTree {
         }
         return node;
     }
-    refreshAndRenderNode(node, recursive, viewStateContext) {
+    refreshAndRenderNode(node, recursive, viewStateContext, options) {
         return __awaiter(this, void 0, void 0, function* () {
             yield this.refreshNode(node, recursive, viewStateContext);
-            this.render(node, viewStateContext);
+            this.render(node, viewStateContext, options);
         });
     }
     refreshNode(node, recursive, viewStateContext) {
@@ -386,7 +386,7 @@ export class AsyncDataTree {
             try {
                 const childrenToRefresh = yield this.doRefreshNode(node, recursive, viewStateContext);
                 node.stale = false;
-                yield Promise.all(childrenToRefresh.map(child => this.doRefreshSubTree(child, recursive, viewStateContext)));
+                yield Promises.settled(childrenToRefresh.map(child => this.doRefreshSubTree(child, recursive, viewStateContext)));
             }
             finally {
                 done();
@@ -414,8 +414,8 @@ export class AsyncDataTree {
                 return this.setChildren(node, children, recursive, viewStateContext);
             }
             catch (err) {
-                if (node !== this.root) {
-                    this.tree.collapse(node === this.root ? null : node);
+                if (node !== this.root && this.tree.hasElement(node)) {
+                    this.tree.collapse(node);
                 }
                 if (isPromiseCanceledError(err)) {
                     return [];
@@ -537,9 +537,14 @@ export class AsyncDataTree {
         }
         return childrenToRefresh;
     }
-    render(node, viewStateContext) {
+    render(node, viewStateContext, options) {
         const children = node.children.map(node => this.asTreeElement(node, viewStateContext));
-        this.tree.setChildren(node === this.root ? null : node, children);
+        const objectTreeOptions = options && Object.assign(Object.assign({}, options), { diffIdentityProvider: options.diffIdentityProvider && {
+                getId(node) {
+                    return options.diffIdentityProvider.getId(node.element);
+                }
+            } });
+        this.tree.setChildren(node === this.root ? null : node, children, objectTreeOptions);
         if (node !== this.root) {
             this.tree.setCollapsible(node, node.hasChildren);
         }
@@ -619,12 +624,13 @@ class CompressibleAsyncDataTreeRenderer {
     }
     renderTwistie(element, twistieElement) {
         if (element.slow) {
-            addClasses(twistieElement, treeItemLoadingIcon.classNames);
+            twistieElement.classList.add(...treeItemLoadingIcon.classNamesArray);
+            return true;
         }
         else {
-            removeClasses(twistieElement, treeItemLoadingIcon.classNames);
+            twistieElement.classList.remove(...treeItemLoadingIcon.classNamesArray);
+            return false;
         }
-        return false;
     }
     disposeElement(node, index, templateData, height) {
         if (this.renderer.disposeElement) {

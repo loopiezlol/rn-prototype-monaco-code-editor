@@ -20,37 +20,42 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import * as nls from '../../../nls.js';
-import { IUndoRedoService, ResourceEditStackSnapshot } from './undoRedo.js';
 import { onUnexpectedError } from '../../../base/common/errors.js';
-import { registerSingleton } from '../../instantiation/common/extensions.js';
-import { IDialogService } from '../../dialogs/common/dialogs.js';
-import Severity from '../../../base/common/severity.js';
-import { Schemas } from '../../../base/common/network.js';
-import { INotificationService } from '../../notification/common/notification.js';
 import { Disposable, isDisposable } from '../../../base/common/lifecycle.js';
+import { Schemas } from '../../../base/common/network.js';
+import Severity from '../../../base/common/severity.js';
+import * as nls from '../../../nls.js';
+import { IDialogService } from '../../dialogs/common/dialogs.js';
+import { registerSingleton } from '../../instantiation/common/extensions.js';
+import { INotificationService } from '../../notification/common/notification.js';
+import { IUndoRedoService, ResourceEditStackSnapshot, UndoRedoGroup, UndoRedoSource } from './undoRedo.js';
 const DEBUG = false;
 function getResourceLabel(resource) {
     return resource.scheme === Schemas.file ? resource.fsPath : resource.path;
 }
 let stackElementCounter = 0;
 class ResourceStackElement {
-    constructor(actual, resourceLabel, strResource) {
+    constructor(actual, resourceLabel, strResource, groupId, groupOrder, sourceId, sourceOrder) {
         this.id = (++stackElementCounter);
         this.type = 0 /* Resource */;
         this.actual = actual;
         this.label = actual.label;
+        this.confirmBeforeUndo = actual.confirmBeforeUndo || false;
         this.resourceLabel = resourceLabel;
         this.strResource = strResource;
         this.resourceLabels = [this.resourceLabel];
         this.strResources = [this.strResource];
+        this.groupId = groupId;
+        this.groupOrder = groupOrder;
+        this.sourceId = sourceId;
+        this.sourceOrder = sourceOrder;
         this.isValid = true;
     }
     setValid(isValid) {
         this.isValid = isValid;
     }
     toString() {
-        return `[${this.id}] [${this.isValid ? 'VALID' : 'INVALID'}] ${this.actual}`;
+        return `[id:${this.id}] [group:${this.groupId}] [${this.isValid ? '  VALID' : 'INVALID'}] ${this.actual.constructor.name} - ${this.actual}`;
     }
 }
 class ResourceReasonPair {
@@ -95,13 +100,18 @@ class RemovedResources {
     }
 }
 class WorkspaceStackElement {
-    constructor(actual, resourceLabels, strResources) {
+    constructor(actual, resourceLabels, strResources, groupId, groupOrder, sourceId, sourceOrder) {
         this.id = (++stackElementCounter);
         this.type = 1 /* Workspace */;
         this.actual = actual;
         this.label = actual.label;
+        this.confirmBeforeUndo = actual.confirmBeforeUndo || false;
         this.resourceLabels = resourceLabels;
         this.strResources = strResources;
+        this.groupId = groupId;
+        this.groupOrder = groupOrder;
+        this.sourceId = sourceId;
+        this.sourceOrder = sourceOrder;
         this.removedResources = null;
         this.invalidatedResources = null;
     }
@@ -135,7 +145,7 @@ class WorkspaceStackElement {
         }
     }
     toString() {
-        return `[${this.id}] [${this.invalidatedResources ? 'INVALID' : 'VALID'}] ${this.actual}`;
+        return `[id:${this.id}] [group:${this.groupId}] [${this.invalidatedResources ? 'INVALID' : '  VALID'}] ${this.actual.constructor.name} - ${this.actual}`;
     }
 }
 class ResourceEditStack {
@@ -204,13 +214,6 @@ class ResourceEditStack {
             }
         }
         this._future = [];
-        if (this._past.length > 0) {
-            const lastElement = this._past[this._past.length - 1];
-            if (lastElement.type === 0 /* Resource */ && !lastElement.isValid) {
-                // clear undo stack
-                this._past = [];
-            }
-        }
         this._past.push(element);
         this.versionId++;
     }
@@ -274,6 +277,12 @@ class ResourceEditStack {
             return null;
         }
         return this._past[this._past.length - 1];
+    }
+    getSecondClosestPastElement() {
+        if (this._past.length < 2) {
+            return null;
+        }
+        return this._past[this._past.length - 2];
     }
     getClosestFutureElement() {
         if (this._future.length === 0) {
@@ -373,11 +382,11 @@ let UndoRedoService = class UndoRedoService {
         }
         console.log(str.join('\n'));
     }
-    pushElement(element) {
+    pushElement(element, group = UndoRedoGroup.None, source = UndoRedoSource.None) {
         if (element.type === 0 /* Resource */) {
             const resourceLabel = getResourceLabel(element.resource);
             const strResource = this.getUriComparisonKey(element.resource);
-            this._pushElement(new ResourceStackElement(element, resourceLabel, strResource));
+            this._pushElement(new ResourceStackElement(element, resourceLabel, strResource, group.id, group.nextOrder(), source.id, source.nextOrder()));
         }
         else {
             const seen = new Set();
@@ -394,10 +403,10 @@ let UndoRedoService = class UndoRedoService {
                 strResources.push(strResource);
             }
             if (resourceLabels.length === 1) {
-                this._pushElement(new ResourceStackElement(element, resourceLabels[0], strResources[0]));
+                this._pushElement(new ResourceStackElement(element, resourceLabels[0], strResources[0], group.id, group.nextOrder(), source.id, source.nextOrder()));
             }
             else {
-                this._pushElement(new WorkspaceStackElement(element, resourceLabels, strResources));
+                this._pushElement(new WorkspaceStackElement(element, resourceLabels, strResources, group.id, group.nextOrder(), source.id, source.nextOrder()));
             }
         }
         if (DEBUG) {
@@ -437,7 +446,7 @@ let UndoRedoService = class UndoRedoService {
         for (const _element of individualArr) {
             const resourceLabel = getResourceLabel(_element.resource);
             const strResource = this.getUriComparisonKey(_element.resource);
-            const element = new ResourceStackElement(_element, resourceLabel, strResource);
+            const element = new ResourceStackElement(_element, resourceLabel, strResource, 0, 0, 0, 0);
             individualMap.set(element.strResource, element);
         }
         for (const strResource of toRemove.strResources) {
@@ -454,7 +463,7 @@ let UndoRedoService = class UndoRedoService {
         for (const _element of individualArr) {
             const resourceLabel = getResourceLabel(_element.resource);
             const strResource = this.getUriComparisonKey(_element.resource);
-            const element = new ResourceStackElement(_element, resourceLabel, strResource);
+            const element = new ResourceStackElement(_element, resourceLabel, strResource, 0, 0, 0, 0);
             individualMap.set(element.strResource, element);
         }
         for (const strResource of toRemove.strResources) {
@@ -517,8 +526,33 @@ let UndoRedoService = class UndoRedoService {
         }
         return { past: [], future: [] };
     }
-    canUndo(resource) {
-        const strResource = this.getUriComparisonKey(resource);
+    _findClosestUndoElementWithSource(sourceId) {
+        if (!sourceId) {
+            return [null, null];
+        }
+        // find an element with the sourceId and with the highest sourceOrder ready to be undone
+        let matchedElement = null;
+        let matchedStrResource = null;
+        for (const [strResource, editStack] of this._editStacks) {
+            const candidate = editStack.getClosestPastElement();
+            if (!candidate) {
+                continue;
+            }
+            if (candidate.sourceId === sourceId) {
+                if (!matchedElement || candidate.sourceOrder > matchedElement.sourceOrder) {
+                    matchedElement = candidate;
+                    matchedStrResource = strResource;
+                }
+            }
+        }
+        return [matchedElement, matchedStrResource];
+    }
+    canUndo(resourceOrSource) {
+        if (resourceOrSource instanceof UndoRedoSource) {
+            const [, matchedStrResource] = this._findClosestUndoElementWithSource(resourceOrSource.id);
+            return matchedStrResource ? true : false;
+        }
+        const strResource = this.getUriComparisonKey(resourceOrSource);
         if (this._editStacks.has(strResource)) {
             const editStack = this._editStacks.get(strResource);
             return editStack.hasPastElements();
@@ -527,7 +561,7 @@ let UndoRedoService = class UndoRedoService {
     }
     _onError(err, element) {
         onUnexpectedError(err);
-        // An error occured while undoing or redoing => drop the undo/redo stack for all affected resources
+        // An error occurred while undoing or redoing => drop the undo/redo stack for all affected resources
         for (const strResource of element.strResources) {
             this.removeElements(strResource);
         }
@@ -551,7 +585,7 @@ let UndoRedoService = class UndoRedoService {
             }
         };
     }
-    _safeInvokeWithLocks(element, invoke, editStackSnapshot, cleanup = Disposable.None) {
+    _safeInvokeWithLocks(element, invoke, editStackSnapshot, cleanup, continuation) {
         const releaseLocks = this._acquireLocks(editStackSnapshot);
         let result;
         try {
@@ -567,6 +601,7 @@ let UndoRedoService = class UndoRedoService {
             return result.then(() => {
                 releaseLocks();
                 cleanup.dispose();
+                return continuation();
             }, (err) => {
                 releaseLocks();
                 cleanup.dispose();
@@ -577,6 +612,7 @@ let UndoRedoService = class UndoRedoService {
             // result is void
             releaseLocks();
             cleanup.dispose();
+            return continuation();
         }
     }
     _invokeWorkspacePrepare(element) {
@@ -594,21 +630,18 @@ let UndoRedoService = class UndoRedoService {
     _invokeResourcePrepare(element, callback) {
         if (element.actual.type !== 1 /* Workspace */ || typeof element.actual.prepareUndoRedo === 'undefined') {
             // no preparation needed
-            callback(Disposable.None);
-            return;
+            return callback(Disposable.None);
         }
         const r = element.actual.prepareUndoRedo();
         if (!r) {
             // nothing to clean up
-            callback(Disposable.None);
-            return;
+            return callback(Disposable.None);
         }
         if (isDisposable(r)) {
-            callback(r);
-            return;
+            return callback(r);
         }
         return r.then((disposable) => {
-            callback(disposable);
+            return callback(disposable);
         });
     }
     _getAffectedEditStacks(element) {
@@ -621,15 +654,15 @@ let UndoRedoService = class UndoRedoService {
     _tryToSplitAndUndo(strResource, element, ignoreResources, message) {
         if (element.canSplit()) {
             this._splitPastWorkspaceElement(element, ignoreResources);
-            this._notificationService.info(message);
-            return new WorkspaceVerificationError(this.undo(strResource));
+            this._notificationService.warn(message);
+            return new WorkspaceVerificationError(this._undo(strResource, 0, true));
         }
         else {
             // Cannot safely split this workspace element => flush all undo/redo stacks
             for (const strResource of element.strResources) {
                 this.removeElements(strResource);
             }
-            this._notificationService.info(message);
+            this._notificationService.warn(message);
             return new WorkspaceVerificationError();
         }
     }
@@ -665,17 +698,41 @@ let UndoRedoService = class UndoRedoService {
         }
         return null;
     }
-    _workspaceUndo(strResource, element) {
+    _workspaceUndo(strResource, element, undoConfirmed) {
         const affectedEditStacks = this._getAffectedEditStacks(element);
         const verificationError = this._checkWorkspaceUndo(strResource, element, affectedEditStacks, /*invalidated resources will be checked after the prepare call*/ false);
         if (verificationError) {
             return verificationError.returnValue;
         }
-        return this._confirmAndExecuteWorkspaceUndo(strResource, element, affectedEditStacks);
+        return this._confirmAndExecuteWorkspaceUndo(strResource, element, affectedEditStacks, undoConfirmed);
     }
-    _confirmAndExecuteWorkspaceUndo(strResource, element, editStackSnapshot) {
+    _isPartOfUndoGroup(element) {
+        if (!element.groupId) {
+            return false;
+        }
+        // check that there is at least another element with the same groupId ready to be undone
+        for (const [, editStack] of this._editStacks) {
+            const pastElement = editStack.getClosestPastElement();
+            if (!pastElement) {
+                continue;
+            }
+            if (pastElement === element) {
+                const secondPastElement = editStack.getSecondClosestPastElement();
+                if (secondPastElement && secondPastElement.groupId === element.groupId) {
+                    // there is another element with the same group id in the same stack!
+                    return true;
+                }
+            }
+            if (pastElement.groupId === element.groupId) {
+                // there is another element with the same group id in another stack!
+                return true;
+            }
+        }
+        return false;
+    }
+    _confirmAndExecuteWorkspaceUndo(strResource, element, editStackSnapshot, undoConfirmed) {
         return __awaiter(this, void 0, void 0, function* () {
-            if (element.canSplit()) {
+            if (element.canSplit() && !this._isPartOfUndoGroup(element)) {
                 // this element can be split
                 const result = yield this._dialogService.show(Severity.Info, nls.localize('confirmWorkspace', "Would you like to undo '{0}' across all files?", element.label), [
                     nls.localize({ key: 'ok', comment: ['{0} denotes a number that is > 1'] }, "Undo in {0} Files", editStackSnapshot.editStacks.length),
@@ -691,7 +748,7 @@ let UndoRedoService = class UndoRedoService {
                 if (result.choice === 1) {
                     // choice: undo this file
                     this._splitPastWorkspaceElement(element, null);
-                    return this.undo(strResource);
+                    return this._undo(strResource, 0, true);
                 }
                 // choice: undo in all files
                 // At this point, it is possible that the element has been made invalid in the meantime (due to the confirmation await)
@@ -699,6 +756,7 @@ let UndoRedoService = class UndoRedoService {
                 if (verificationError1) {
                     return verificationError1.returnValue;
                 }
+                undoConfirmed = true;
             }
             // prepare
             let cleanup;
@@ -717,10 +775,10 @@ let UndoRedoService = class UndoRedoService {
             for (const editStack of editStackSnapshot.editStacks) {
                 editStack.moveBackward(element);
             }
-            return this._safeInvokeWithLocks(element, () => element.actual.undo(), editStackSnapshot, cleanup);
+            return this._safeInvokeWithLocks(element, () => element.actual.undo(), editStackSnapshot, cleanup, () => this._continueUndoInGroup(element.groupId, undoConfirmed));
         });
     }
-    _resourceUndo(editStack, element) {
+    _resourceUndo(editStack, element, undoConfirmed) {
         if (!element.isValid) {
             // invalid element => immediately flush edit stack!
             editStack.flushAllElements();
@@ -728,16 +786,55 @@ let UndoRedoService = class UndoRedoService {
         }
         if (editStack.locked) {
             const message = nls.localize({ key: 'cannotResourceUndoDueToInProgressUndoRedo', comment: ['{0} is a label for an operation.'] }, "Could not undo '{0}' because there is already an undo or redo operation running.", element.label);
-            this._notificationService.info(message);
+            this._notificationService.warn(message);
             return;
         }
         return this._invokeResourcePrepare(element, (cleanup) => {
             editStack.moveBackward(element);
-            return this._safeInvokeWithLocks(element, () => element.actual.undo(), new EditStackSnapshot([editStack]), cleanup);
+            return this._safeInvokeWithLocks(element, () => element.actual.undo(), new EditStackSnapshot([editStack]), cleanup, () => this._continueUndoInGroup(element.groupId, undoConfirmed));
         });
     }
-    undo(resource) {
-        const strResource = typeof resource === 'string' ? resource : this.getUriComparisonKey(resource);
+    _findClosestUndoElementInGroup(groupId) {
+        if (!groupId) {
+            return [null, null];
+        }
+        // find another element with the same groupId and with the highest groupOrder ready to be undone
+        let matchedElement = null;
+        let matchedStrResource = null;
+        for (const [strResource, editStack] of this._editStacks) {
+            const candidate = editStack.getClosestPastElement();
+            if (!candidate) {
+                continue;
+            }
+            if (candidate.groupId === groupId) {
+                if (!matchedElement || candidate.groupOrder > matchedElement.groupOrder) {
+                    matchedElement = candidate;
+                    matchedStrResource = strResource;
+                }
+            }
+        }
+        return [matchedElement, matchedStrResource];
+    }
+    _continueUndoInGroup(groupId, undoConfirmed) {
+        if (!groupId) {
+            return;
+        }
+        const [, matchedStrResource] = this._findClosestUndoElementInGroup(groupId);
+        if (matchedStrResource) {
+            return this._undo(matchedStrResource, 0, undoConfirmed);
+        }
+    }
+    undo(resourceOrSource) {
+        if (resourceOrSource instanceof UndoRedoSource) {
+            const [, matchedStrResource] = this._findClosestUndoElementWithSource(resourceOrSource.id);
+            return matchedStrResource ? this._undo(matchedStrResource, resourceOrSource.id, false) : undefined;
+        }
+        if (typeof resourceOrSource === 'string') {
+            return this._undo(resourceOrSource, 0, false);
+        }
+        return this._undo(this.getUriComparisonKey(resourceOrSource), 0, false);
+    }
+    _undo(strResource, sourceId = 0, undoConfirmed) {
         if (!this._editStacks.has(strResource)) {
             return;
         }
@@ -746,12 +843,25 @@ let UndoRedoService = class UndoRedoService {
         if (!element) {
             return;
         }
+        if (element.groupId) {
+            // this element is a part of a group, we need to make sure undoing in a group is in order
+            const [matchedElement, matchedStrResource] = this._findClosestUndoElementInGroup(element.groupId);
+            if (element !== matchedElement && matchedStrResource) {
+                // there is an element in the same group that should be undone before this one
+                return this._undo(matchedStrResource, sourceId, undoConfirmed);
+            }
+        }
+        const shouldPromptForConfirmation = (element.sourceId !== sourceId || element.confirmBeforeUndo);
+        if (shouldPromptForConfirmation && !undoConfirmed) {
+            // Hit a different source or the element asks for prompt before undo, prompt for confirmation
+            return this._confirmAndContinueUndo(strResource, sourceId, element);
+        }
         try {
             if (element.type === 1 /* Workspace */) {
-                return this._workspaceUndo(strResource, element);
+                return this._workspaceUndo(strResource, element, undoConfirmed);
             }
             else {
-                return this._resourceUndo(editStack, element);
+                return this._resourceUndo(editStack, element, undoConfirmed);
             }
         }
         finally {
@@ -760,8 +870,49 @@ let UndoRedoService = class UndoRedoService {
             }
         }
     }
-    canRedo(resource) {
-        const strResource = this.getUriComparisonKey(resource);
+    _confirmAndContinueUndo(strResource, sourceId, element) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const result = yield this._dialogService.show(Severity.Info, nls.localize('confirmDifferentSource', "Would you like to undo '{0}'?", element.label), [
+                nls.localize('confirmDifferentSource.yes', "Yes"),
+                nls.localize('cancel', "Cancel"),
+            ], {
+                cancelId: 1
+            });
+            if (result.choice === 1) {
+                // choice: cancel
+                return;
+            }
+            // choice: undo
+            return this._undo(strResource, sourceId, true);
+        });
+    }
+    _findClosestRedoElementWithSource(sourceId) {
+        if (!sourceId) {
+            return [null, null];
+        }
+        // find an element with sourceId and with the lowest sourceOrder ready to be redone
+        let matchedElement = null;
+        let matchedStrResource = null;
+        for (const [strResource, editStack] of this._editStacks) {
+            const candidate = editStack.getClosestFutureElement();
+            if (!candidate) {
+                continue;
+            }
+            if (candidate.sourceId === sourceId) {
+                if (!matchedElement || candidate.sourceOrder < matchedElement.sourceOrder) {
+                    matchedElement = candidate;
+                    matchedStrResource = strResource;
+                }
+            }
+        }
+        return [matchedElement, matchedStrResource];
+    }
+    canRedo(resourceOrSource) {
+        if (resourceOrSource instanceof UndoRedoSource) {
+            const [, matchedStrResource] = this._findClosestRedoElementWithSource(resourceOrSource.id);
+            return matchedStrResource ? true : false;
+        }
+        const strResource = this.getUriComparisonKey(resourceOrSource);
         if (this._editStacks.has(strResource)) {
             const editStack = this._editStacks.get(strResource);
             return editStack.hasFutureElements();
@@ -771,15 +922,15 @@ let UndoRedoService = class UndoRedoService {
     _tryToSplitAndRedo(strResource, element, ignoreResources, message) {
         if (element.canSplit()) {
             this._splitFutureWorkspaceElement(element, ignoreResources);
-            this._notificationService.info(message);
-            return new WorkspaceVerificationError(this.redo(strResource));
+            this._notificationService.warn(message);
+            return new WorkspaceVerificationError(this._redo(strResource));
         }
         else {
             // Cannot safely split this workspace element => flush all undo/redo stacks
             for (const strResource of element.strResources) {
                 this.removeElements(strResource);
             }
-            this._notificationService.info(message);
+            this._notificationService.warn(message);
             return new WorkspaceVerificationError();
         }
     }
@@ -842,7 +993,7 @@ let UndoRedoService = class UndoRedoService {
             for (const editStack of editStackSnapshot.editStacks) {
                 editStack.moveForward(element);
             }
-            return this._safeInvokeWithLocks(element, () => element.actual.redo(), editStackSnapshot, cleanup);
+            return this._safeInvokeWithLocks(element, () => element.actual.redo(), editStackSnapshot, cleanup, () => this._continueRedoInGroup(element.groupId));
         });
     }
     _resourceRedo(editStack, element) {
@@ -853,16 +1004,55 @@ let UndoRedoService = class UndoRedoService {
         }
         if (editStack.locked) {
             const message = nls.localize({ key: 'cannotResourceRedoDueToInProgressUndoRedo', comment: ['{0} is a label for an operation.'] }, "Could not redo '{0}' because there is already an undo or redo operation running.", element.label);
-            this._notificationService.info(message);
+            this._notificationService.warn(message);
             return;
         }
         return this._invokeResourcePrepare(element, (cleanup) => {
             editStack.moveForward(element);
-            return this._safeInvokeWithLocks(element, () => element.actual.redo(), new EditStackSnapshot([editStack]), cleanup);
+            return this._safeInvokeWithLocks(element, () => element.actual.redo(), new EditStackSnapshot([editStack]), cleanup, () => this._continueRedoInGroup(element.groupId));
         });
     }
-    redo(resource) {
-        const strResource = typeof resource === 'string' ? resource : this.getUriComparisonKey(resource);
+    _findClosestRedoElementInGroup(groupId) {
+        if (!groupId) {
+            return [null, null];
+        }
+        // find another element with the same groupId and with the lowest groupOrder ready to be redone
+        let matchedElement = null;
+        let matchedStrResource = null;
+        for (const [strResource, editStack] of this._editStacks) {
+            const candidate = editStack.getClosestFutureElement();
+            if (!candidate) {
+                continue;
+            }
+            if (candidate.groupId === groupId) {
+                if (!matchedElement || candidate.groupOrder < matchedElement.groupOrder) {
+                    matchedElement = candidate;
+                    matchedStrResource = strResource;
+                }
+            }
+        }
+        return [matchedElement, matchedStrResource];
+    }
+    _continueRedoInGroup(groupId) {
+        if (!groupId) {
+            return;
+        }
+        const [, matchedStrResource] = this._findClosestRedoElementInGroup(groupId);
+        if (matchedStrResource) {
+            return this._redo(matchedStrResource);
+        }
+    }
+    redo(resourceOrSource) {
+        if (resourceOrSource instanceof UndoRedoSource) {
+            const [, matchedStrResource] = this._findClosestRedoElementWithSource(resourceOrSource.id);
+            return matchedStrResource ? this._redo(matchedStrResource) : undefined;
+        }
+        if (typeof resourceOrSource === 'string') {
+            return this._redo(resourceOrSource);
+        }
+        return this._redo(this.getUriComparisonKey(resourceOrSource));
+    }
+    _redo(strResource) {
         if (!this._editStacks.has(strResource)) {
             return;
         }
@@ -870,6 +1060,14 @@ let UndoRedoService = class UndoRedoService {
         const element = editStack.getClosestFutureElement();
         if (!element) {
             return;
+        }
+        if (element.groupId) {
+            // this element is a part of a group, we need to make sure redoing in a group is in order
+            const [matchedElement, matchedStrResource] = this._findClosestRedoElementInGroup(element.groupId);
+            if (element !== matchedElement && matchedStrResource) {
+                // there is an element in the same group that should be redone before this one
+                return this._redo(matchedStrResource);
+            }
         }
         try {
             if (element.type === 1 /* Workspace */) {

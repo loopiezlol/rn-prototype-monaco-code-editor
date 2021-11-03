@@ -2,10 +2,13 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-import { LineBreakData } from '../../common/viewModel/splitLinesCollection.js';
+var _a;
 import { createStringBuilder } from '../../common/core/stringBuilder.js';
 import * as strings from '../../../base/common/strings.js';
 import { Configuration } from '../config/configuration.js';
+import { LineBreakData } from '../../common/viewModel/viewModel.js';
+import { LineInjectedText } from '../../common/model/textModelEvents.js';
+const ttPolicy = (_a = window.trustedTypes) === null || _a === void 0 ? void 0 : _a.createPolicy('domLineBreaksComputer', { createHTML: value => value });
 export class DOMLineBreaksComputerFactory {
     static create() {
         return new DOMLineBreaksComputerFactory();
@@ -16,21 +19,38 @@ export class DOMLineBreaksComputerFactory {
         tabSize = tabSize | 0; //@perf
         wrappingColumn = +wrappingColumn; //@perf
         let requests = [];
+        let injectedTexts = [];
         return {
-            addRequest: (lineText, previousLineBreakData) => {
+            addRequest: (lineText, injectedText, previousLineBreakData) => {
                 requests.push(lineText);
+                injectedTexts.push(injectedText);
             },
             finalize: () => {
-                return createLineBreaks(requests, fontInfo, tabSize, wrappingColumn, wrappingIndent);
+                return createLineBreaks(requests, fontInfo, tabSize, wrappingColumn, wrappingIndent, injectedTexts);
             }
         };
     }
 }
-function createLineBreaks(requests, fontInfo, tabSize, firstLineBreakColumn, wrappingIndent) {
+function createLineBreaks(requests, fontInfo, tabSize, firstLineBreakColumn, wrappingIndent, injectedTextsPerLine) {
+    var _a;
+    function createEmptyLineBreakWithPossiblyInjectedText(requestIdx) {
+        const injectedTexts = injectedTextsPerLine[requestIdx];
+        if (injectedTexts) {
+            const lineText = LineInjectedText.applyInjectedText(requests[requestIdx], injectedTexts);
+            const injectionOptions = injectedTexts.map(t => t.options);
+            const injectionOffsets = injectedTexts.map(text => text.column - 1);
+            // creating a `LineBreakData` with an invalid `breakOffsetsVisibleColumn` is OK
+            // because `breakOffsetsVisibleColumn` will never be used because it contains injected text
+            return new LineBreakData([lineText.length], [], 0, injectionOffsets, injectionOptions);
+        }
+        else {
+            return null;
+        }
+    }
     if (firstLineBreakColumn === -1) {
         const result = [];
         for (let i = 0, len = requests.length; i < len; i++) {
-            result[i] = null;
+            result[i] = createEmptyLineBreakWithPossiblyInjectedText(i);
         }
         return result;
     }
@@ -49,7 +69,7 @@ function createLineBreaks(requests, fontInfo, tabSize, firstLineBreakColumn, wra
     const allCharOffsets = [];
     const allVisibleColumns = [];
     for (let i = 0; i < requests.length; i++) {
-        const lineContent = requests[i];
+        const lineContent = LineInjectedText.applyInjectedText(requests[i], injectedTextsPerLine[i]);
         let firstNonWhitespaceIndex = 0;
         let wrappedTextIndentLength = 0;
         let width = overallWidth;
@@ -86,7 +106,9 @@ function createLineBreaks(requests, fontInfo, tabSize, firstLineBreakColumn, wra
         allCharOffsets[i] = tmp[0];
         allVisibleColumns[i] = tmp[1];
     }
-    containerDomNode.innerHTML = sb.build();
+    const html = sb.build();
+    const trustedhtml = (_a = ttPolicy === null || ttPolicy === void 0 ? void 0 : ttPolicy.createHTML(html)) !== null && _a !== void 0 ? _a : html;
+    containerDomNode.innerHTML = trustedhtml;
     containerDomNode.style.position = 'absolute';
     containerDomNode.style.top = '10000';
     containerDomNode.style.wordWrap = 'break-word';
@@ -98,7 +120,7 @@ function createLineBreaks(requests, fontInfo, tabSize, firstLineBreakColumn, wra
         const lineDomNode = lineDomNodes[i];
         const breakOffsets = readLineBreaks(range, lineDomNode, renderLineContents[i], allCharOffsets[i]);
         if (breakOffsets === null) {
-            result[i] = null;
+            result[i] = createEmptyLineBreakWithPossiblyInjectedText(i);
             continue;
         }
         const firstNonWhitespaceIndex = firstNonWhitespaceIndices[i];
@@ -114,7 +136,18 @@ function createLineBreaks(requests, fontInfo, tabSize, firstLineBreakColumn, wra
                 breakOffsets[j] += firstNonWhitespaceIndex;
             }
         }
-        result[i] = new LineBreakData(breakOffsets, breakOffsetsVisibleColumn, wrappedTextIndentLength);
+        let injectionOptions;
+        let injectionOffsets;
+        const curInjectedTexts = injectedTextsPerLine[i];
+        if (curInjectedTexts) {
+            injectionOptions = curInjectedTexts.map(t => t.options);
+            injectionOffsets = curInjectedTexts.map(text => text.column - 1);
+        }
+        else {
+            injectionOptions = null;
+            injectionOffsets = null;
+        }
+        result[i] = new LineBreakData(breakOffsets, breakOffsetsVisibleColumn, wrappedTextIndentLength, injectionOffsets, injectionOptions);
     }
     document.body.removeChild(containerDomNode);
     return result;
@@ -186,11 +219,12 @@ function renderLine(lineContent, initialVisibleColumn, tabSize, width, sb) {
                 if (strings.isFullWidthCharacter(charCode)) {
                     charWidth++;
                 }
-                // if (renderControlCharacters && charCode < 32) {
-                // 	sb.write1(9216 + charCode);
-                // } else {
-                sb.write1(charCode);
-            // }
+                if (charCode < 32) {
+                    sb.write1(9216 + charCode);
+                }
+                else {
+                    sb.write1(charCode);
+                }
         }
         charOffset += producedCharacters;
         visibleColumn += charWidth;

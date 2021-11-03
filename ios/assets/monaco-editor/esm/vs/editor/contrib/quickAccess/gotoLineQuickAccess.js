@@ -2,10 +2,10 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-import { localize } from '../../../nls.js';
-import { DisposableStore, Disposable, toDisposable } from '../../../base/common/lifecycle.js';
-import { AbstractEditorNavigationQuickAccessProvider } from './editorNavigationQuickAccess.js';
+import { Disposable, DisposableStore, toDisposable } from '../../../base/common/lifecycle.js';
 import { getCodeEditor } from '../../browser/editorBrowser.js';
+import { AbstractEditorNavigationQuickAccessProvider } from './editorNavigationQuickAccess.js';
+import { localize } from '../../../nls.js';
 export class AbstractGotoLineQuickAccessProvider extends AbstractEditorNavigationQuickAccessProvider {
     constructor() {
         super({ canAcceptInBackground: true });
@@ -16,7 +16,8 @@ export class AbstractGotoLineQuickAccessProvider extends AbstractEditorNavigatio
         picker.ariaLabel = label;
         return Disposable.None;
     }
-    provideWithTextEditor(editor, picker, token) {
+    provideWithTextEditor(context, picker, token) {
+        const editor = context.editor;
         const disposables = new DisposableStore();
         // Goto line once picked
         disposables.add(picker.onDidAccept(event => {
@@ -25,7 +26,7 @@ export class AbstractGotoLineQuickAccessProvider extends AbstractEditorNavigatio
                 if (!this.isValidLineNumber(editor, item.lineNumber)) {
                     return;
                 }
-                this.gotoLocation(editor, { range: this.toRange(item.lineNumber, item.column), keyMods: picker.keyMods, preserveFocus: event.inBackground });
+                this.gotoLocation(context, { range: this.toRange(item.lineNumber, item.column), keyMods: picker.keyMods, preserveFocus: event.inBackground });
                 if (!event.inBackground) {
                     picker.hide();
                 }
@@ -60,7 +61,7 @@ export class AbstractGotoLineQuickAccessProvider extends AbstractEditorNavigatio
         const codeEditor = getCodeEditor(editor);
         if (codeEditor) {
             const options = codeEditor.getOptions();
-            const lineNumbers = options.get(52 /* lineNumbers */);
+            const lineNumbers = options.get(59 /* lineNumbers */);
             if (lineNumbers.renderType === 2 /* Relative */) {
                 codeEditor.updateOptions({ lineNumbers: 'on' });
                 disposables.add(toDisposable(() => codeEditor.updateOptions({ lineNumbers: 'relative' })));
@@ -89,7 +90,7 @@ export class AbstractGotoLineQuickAccessProvider extends AbstractEditorNavigatio
         // Location valid: indicate this as picker label
         if (this.isValidLineNumber(editor, lineNumber)) {
             if (this.isValidColumn(editor, lineNumber, column)) {
-                return localize('gotoLineColumnLabel', "Go to line {0} and column {1}.", lineNumber, column);
+                return localize('gotoLineColumnLabel', "Go to line {0} and character {1}.", lineNumber, column);
             }
             return localize('gotoLineLabel', "Go to line {0}.", lineNumber);
         }

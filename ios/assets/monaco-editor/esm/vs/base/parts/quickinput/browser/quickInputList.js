@@ -8,24 +8,33 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
     else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
     return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
-import './media/quickInput.css';
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
 import * as dom from '../../../browser/dom.js';
-import { dispose } from '../../../common/lifecycle.js';
-import { matchesFuzzyCodiconAware, parseCodicons } from '../../../common/codicon.js';
-import { compareAnything } from '../../../common/comparers.js';
-import { Emitter, Event } from '../../../common/event.js';
-import { assign } from '../../../common/objects.js';
 import { StandardKeyboardEvent } from '../../../browser/keyboardEvent.js';
-import { IconLabel } from '../../../browser/ui/iconLabel/iconLabel.js';
-import { HighlightedLabel } from '../../../browser/ui/highlightedlabel/highlightedLabel.js';
-import { memoize } from '../../../common/decorators.js';
-import { range } from '../../../common/arrays.js';
-import * as platform from '../../../common/platform.js';
 import { ActionBar } from '../../../browser/ui/actionbar/actionbar.js';
-import { Action } from '../../../common/actions.js';
-import { getIconClass } from './quickInputUtils.js';
-import { withNullAsUndefined } from '../../../common/types.js';
+import { HighlightedLabel } from '../../../browser/ui/highlightedlabel/highlightedLabel.js';
+import { IconLabel } from '../../../browser/ui/iconLabel/iconLabel.js';
 import { KeybindingLabel } from '../../../browser/ui/keybindingLabel/keybindingLabel.js';
+import { Action } from '../../../common/actions.js';
+import { range } from '../../../common/arrays.js';
+import { getCodiconAriaLabel } from '../../../common/codicons.js';
+import { compareAnything } from '../../../common/comparers.js';
+import { memoize } from '../../../common/decorators.js';
+import { Emitter, Event } from '../../../common/event.js';
+import { matchesFuzzyIconAware, parseLabelWithIcons } from '../../../common/iconLabels.js';
+import { dispose } from '../../../common/lifecycle.js';
+import * as platform from '../../../common/platform.js';
+import { withNullAsUndefined } from '../../../common/types.js';
+import { getIconClass } from './quickInputUtils.js';
+import './media/quickInput.css';
 import { localize } from '../../../../nls.js';
 const $ = dom.$;
 class ListElement {
@@ -33,7 +42,7 @@ class ListElement {
         this.hidden = false;
         this._onChecked = new Emitter();
         this.onChecked = this._onChecked.event;
-        assign(this, init);
+        Object.assign(this, init);
     }
     get checked() {
         return !!this._checked;
@@ -74,7 +83,7 @@ class ListElementRenderer {
         const row1 = dom.append(rows, $('.quick-input-list-row'));
         const row2 = dom.append(rows, $('.quick-input-list-row'));
         // Label
-        data.label = new IconLabel(row1, { supportHighlights: true, supportDescriptionHighlights: true, supportCodicons: true });
+        data.label = new IconLabel(row1, { supportHighlights: true, supportDescriptionHighlights: true, supportIcons: true });
         // Keybinding
         const keybindingContainer = dom.append(row1, $('.quick-input-list-entry-keybinding'));
         data.keybinding = new KeybindingLabel(keybindingContainer, platform.OS);
@@ -116,12 +125,7 @@ class ListElementRenderer {
         else {
             data.separator.style.display = 'none';
         }
-        if (element.separator) {
-            dom.addClass(data.entry, 'quick-input-list-separator-border');
-        }
-        else {
-            dom.removeClass(data.entry, 'quick-input-list-separator-border');
-        }
+        data.entry.classList.toggle('quick-input-list-separator-border', !!element.separator);
         // Actions
         data.actionBar.clear();
         const buttons = element.item.buttons;
@@ -131,20 +135,19 @@ class ListElementRenderer {
                 if (button.alwaysVisible) {
                     cssClasses = cssClasses ? `${cssClasses} always-visible` : 'always-visible';
                 }
-                const action = new Action(`id-${index}`, '', cssClasses, true, () => {
+                const action = new Action(`id-${index}`, '', cssClasses, true, () => __awaiter(this, void 0, void 0, function* () {
                     element.fireButtonTriggered({
                         button,
                         item: element.item
                     });
-                    return Promise.resolve();
-                });
+                }));
                 action.tooltip = button.tooltip || '';
                 return action;
             }), { icon: true, label: false });
-            dom.addClass(data.entry, 'has-actions');
+            data.entry.classList.add('has-actions');
         }
         else {
-            dom.removeClass(data.entry, 'has-actions');
+            data.entry.classList.remove('has-actions');
         }
     }
     disposeElement(element, index, data) {
@@ -183,6 +186,7 @@ export class QuickInputList {
         this.matchOnDescription = false;
         this.matchOnDetail = false;
         this.matchOnLabel = true;
+        this.matchOnMeta = true;
         this.sortByLabel = true;
         this._onChangedAllVisibleChecked = new Emitter();
         this.onChangedAllVisibleChecked = this._onChangedAllVisibleChecked.event;
@@ -273,6 +277,12 @@ export class QuickInputList {
     get onDidChangeSelection() {
         return Event.map(this.list.onDidChangeSelection, e => ({ items: e.elements.map(e => e.item), event: e.browserEvent }));
     }
+    get scrollTop() {
+        return this.list.scrollTop;
+    }
+    set scrollTop(scrollTop) {
+        this.list.scrollTop = scrollTop;
+    }
     getAllVisibleChecked() {
         return this.allVisibleChecked(this.elements, false);
     }
@@ -333,16 +343,18 @@ export class QuickInputList {
             if (item.type !== 'separator') {
                 const previous = index && inputElements[index - 1];
                 const saneLabel = item.label && item.label.replace(/\r?\n/g, ' ');
+                const saneMeta = item.meta && item.meta.replace(/\r?\n/g, ' ');
                 const saneDescription = item.description && item.description.replace(/\r?\n/g, ' ');
                 const saneDetail = item.detail && item.detail.replace(/\r?\n/g, ' ');
                 const saneAriaLabel = item.ariaLabel || [saneLabel, saneDescription, saneDetail]
-                    .map(s => s && parseCodicons(s).text)
+                    .map(s => getCodiconAriaLabel(s))
                     .filter(s => !!s)
                     .join(', ');
                 result.push(new ListElement({
                     index,
                     item,
                     saneLabel,
+                    saneMeta,
                     saneAriaLabel,
                     saneDescription,
                     saneDetail,
@@ -480,13 +492,15 @@ export class QuickInputList {
                 element.separator = previous && previous.type === 'separator' ? previous : undefined;
             });
         }
-        // Filter by value (since we support codicons, use codicon aware fuzzy matching)
+        // Filter by value (since we support icons in labels, use $(..) aware fuzzy matching)
         else {
+            let currentSeparator;
             this.elements.forEach(element => {
-                const labelHighlights = this.matchOnLabel ? withNullAsUndefined(matchesFuzzyCodiconAware(query, parseCodicons(element.saneLabel))) : undefined;
-                const descriptionHighlights = this.matchOnDescription ? withNullAsUndefined(matchesFuzzyCodiconAware(query, parseCodicons(element.saneDescription || ''))) : undefined;
-                const detailHighlights = this.matchOnDetail ? withNullAsUndefined(matchesFuzzyCodiconAware(query, parseCodicons(element.saneDetail || ''))) : undefined;
-                if (labelHighlights || descriptionHighlights || detailHighlights) {
+                const labelHighlights = this.matchOnLabel ? withNullAsUndefined(matchesFuzzyIconAware(query, parseLabelWithIcons(element.saneLabel))) : undefined;
+                const descriptionHighlights = this.matchOnDescription ? withNullAsUndefined(matchesFuzzyIconAware(query, parseLabelWithIcons(element.saneDescription || ''))) : undefined;
+                const detailHighlights = this.matchOnDetail ? withNullAsUndefined(matchesFuzzyIconAware(query, parseLabelWithIcons(element.saneDetail || ''))) : undefined;
+                const metaHighlights = this.matchOnMeta ? withNullAsUndefined(matchesFuzzyIconAware(query, parseLabelWithIcons(element.saneMeta || ''))) : undefined;
+                if (labelHighlights || descriptionHighlights || detailHighlights || metaHighlights) {
                     element.labelHighlights = labelHighlights;
                     element.descriptionHighlights = descriptionHighlights;
                     element.detailHighlights = detailHighlights;
@@ -499,6 +513,15 @@ export class QuickInputList {
                     element.hidden = !element.item.alwaysShow;
                 }
                 element.separator = undefined;
+                // we can show the separator unless the list gets sorted by match
+                if (!this.sortByLabel) {
+                    const previous = element.index && this.inputElements[element.index - 1];
+                    currentSeparator = previous && previous.type === 'separator' ? previous : currentSeparator;
+                    if (currentSeparator && !element.hidden) {
+                        element.separator = currentSeparator;
+                        currentSeparator = undefined;
+                    }
+                }
             });
         }
         const shownElements = this.elements.filter(element => !element.hidden);

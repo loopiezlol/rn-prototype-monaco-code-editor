@@ -23,6 +23,13 @@ export class LinkedList {
         return this._first === Node.Undefined;
     }
     clear() {
+        let node = this._first;
+        while (node !== Node.Undefined) {
+            const next = node.next;
+            node.prev = Node.Undefined;
+            node.next = Node.Undefined;
+            node = next;
+        }
         this._first = Node.Undefined;
         this._last = Node.Undefined;
         this._size = 0;
@@ -113,12 +120,5 @@ export class LinkedList {
             yield node.element;
             node = node.next;
         }
-    }
-    toArray() {
-        const result = [];
-        for (let node = this._first; node !== Node.Undefined; node = node.next) {
-            result.push(node.element);
-        }
-        return result;
     }
 }

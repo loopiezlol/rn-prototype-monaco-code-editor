@@ -11,11 +11,24 @@ var __extends = (this && this.__extends) || (function () {
         return extendStatics(d, b);
     };
     return function (d, b) {
+        if (typeof b !== "function" && b !== null)
+            throw new TypeError("Class extends value " + String(b) + " is not a constructor or null");
         extendStatics(d, b);
         function __() { this.constructor = d; }
         d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
     };
 })();
+var __assign = (this && this.__assign) || function () {
+    __assign = Object.assign || function(t) {
+        for (var s, i = 1, n = arguments.length; i < n; i++) {
+            s = arguments[i];
+            for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p))
+                t[p] = s[p];
+        }
+        return t;
+    };
+    return __assign.apply(this, arguments);
+};
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
     return new (P || (P = Promise))(function (resolve, reject) {
@@ -52,6 +65,7 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         if (op[0] & 5) throw op[1]; return { value: op[0] ? op[1] : void 0, done: true };
     }
 };
+import { typescriptDefaults } from './monaco.contribution.js';
 import { libFileSet } from './lib/lib.index.js';
 import { editor, languages, Uri, Range, MarkerTag, MarkerSeverity } from './fillers/monaco-editor-core.js';
 //#region utils copied from typescript to prevent loading the entire typescriptServices ---
@@ -130,13 +144,18 @@ var LibFiles = /** @class */ (function () {
         }
         return false;
     };
-    LibFiles.prototype.getOrCreateModel = function (uri) {
+    LibFiles.prototype.getOrCreateModel = function (fileName) {
+        var uri = Uri.parse(fileName);
         var model = editor.getModel(uri);
         if (model) {
             return model;
         }
         if (this.isLibFile(uri) && this._hasFetchedLibFiles) {
-            return editor.createModel(this._libFiles[uri.path.slice(1)], 'javascript', uri);
+            return editor.createModel(this._libFiles[uri.path.slice(1)], 'typescript', uri);
+        }
+        var matchedLibFile = typescriptDefaults.getExtraLibs()[fileName];
+        if (matchedLibFile) {
+            return editor.createModel(matchedLibFile.content, 'typescript', uri);
         }
         return null;
     };
@@ -202,18 +221,45 @@ var DiagnosticsAdapter = /** @class */ (function (_super) {
             if (model.getModeId() !== _selector) {
                 return;
             }
+            var maybeValidate = function () {
+                var onlyVisible = _this._defaults.getDiagnosticsOptions().onlyVisible;
+                if (onlyVisible) {
+                    if (model.isAttachedToEditor()) {
+                        _this._doValidate(model);
+                    }
+                }
+                else {
+                    _this._doValidate(model);
+                }
+            };
             var handle;
             var changeSubscription = model.onDidChangeContent(function () {
                 clearTimeout(handle);
-                handle = setTimeout(function () { return _this._doValidate(model); }, 500);
+                handle = setTimeout(maybeValidate, 500);
+            });
+            var visibleSubscription = model.onDidChangeAttached(function () {
+                var onlyVisible = _this._defaults.getDiagnosticsOptions().onlyVisible;
+                if (onlyVisible) {
+                    if (model.isAttachedToEditor()) {
+                        // this model is now attached to an editor
+                        // => compute diagnostics
+                        maybeValidate();
+                    }
+                    else {
+                        // this model is no longer attached to an editor
+                        // => clear existing diagnostics
+                        editor.setModelMarkers(model, _this._selector, []);
+                    }
+                }
             });
             _this._listener[model.uri.toString()] = {
                 dispose: function () {
                     changeSubscription.dispose();
+                    visibleSubscription.dispose();
                     clearTimeout(handle);
                 }
             };
-            _this._doValidate(model);
+            maybeValidate();
         };
         var onModelRemoved = function (model) {
             editor.setModelMarkers(model, _this._selector, []);
@@ -223,7 +269,7 @@ var DiagnosticsAdapter = /** @class */ (function (_super) {
                 delete _this._listener[key];
             }
         };
-        _this._disposables.push(editor.onDidCreateModel(onModelAdd));
+        _this._disposables.push(editor.onDidCreateModel(function (model) { return onModelAdd(model); }));
         _this._disposables.push(editor.onWillDisposeModel(onModelRemoved));
         _this._disposables.push(editor.onDidChangeModelLanguage(function (event) {
             onModelRemoved(event.model);
@@ -247,7 +293,7 @@ var DiagnosticsAdapter = /** @class */ (function (_super) {
         };
         _this._disposables.push(_this._defaults.onDidChange(recomputeDiagostics));
         _this._disposables.push(_this._defaults.onDidExtraLibsChange(recomputeDiagostics));
-        editor.getModels().forEach(onModelAdd);
+        editor.getModels().forEach(function (model) { return onModelAdd(model); });
         return _this;
     }
     DiagnosticsAdapter.prototype.dispose = function () {
@@ -337,14 +383,13 @@ var DiagnosticsAdapter = /** @class */ (function (_super) {
     DiagnosticsAdapter.prototype._convertRelatedInformation = function (model, relatedInformation) {
         var _this = this;
         if (!relatedInformation) {
-            return;
+            return [];
         }
         var result = [];
         relatedInformation.forEach(function (info) {
             var relatedResource = model;
             if (info.file) {
-                var relatedResourceUri = Uri.parse(info.file.fileName);
-                relatedResource = _this._libFiles.getOrCreateModel(relatedResourceUri);
+                relatedResource = _this._libFiles.getOrCreateModel(info.file.fileName);
             }
             if (!relatedResource) {
                 return;
@@ -405,6 +450,9 @@ var SuggestAdapter = /** @class */ (function (_super) {
                         return [4 /*yield*/, this._worker(resource)];
                     case 1:
                         worker = _a.sent();
+                        if (model.isDisposed()) {
+                            return [2 /*return*/];
+                        }
                         return [4 /*yield*/, worker.getCompletionsAtPosition(resource.toString(), offset)];
                     case 2:
                         info = _a.sent();
@@ -522,10 +570,13 @@ export { SuggestAdapter };
 function tagToString(tag) {
     var tagLabel = "*@" + tag.name + "*";
     if (tag.name === 'param' && tag.text) {
-        var _a = tag.text.split(' '), paramName = _a[0], rest = _a.slice(1);
-        tagLabel += "`" + paramName + "`";
+        var _a = tag.text, paramName = _a[0], rest = _a.slice(1);
+        tagLabel += "`" + paramName.text + "`";
         if (rest.length > 0)
-            tagLabel += " \u2014 " + rest.join(' ');
+            tagLabel += " \u2014 " + rest.map(function (r) { return r.text; }).join(' ');
+    }
+    else if (Array.isArray(tag.text)) {
+        tagLabel += " \u2014 " + tag.text.map(function (r) { return r.text; }).join(' ');
     }
     else if (tag.text) {
         tagLabel += " \u2014 " + tag.text;
@@ -539,7 +590,28 @@ var SignatureHelpAdapter = /** @class */ (function (_super) {
         _this.signatureHelpTriggerCharacters = ['(', ','];
         return _this;
     }
-    SignatureHelpAdapter.prototype.provideSignatureHelp = function (model, position, token) {
+    SignatureHelpAdapter._toSignatureHelpTriggerReason = function (context) {
+        switch (context.triggerKind) {
+            case languages.SignatureHelpTriggerKind.TriggerCharacter:
+                if (context.triggerCharacter) {
+                    if (context.isRetrigger) {
+                        return { kind: 'retrigger', triggerCharacter: context.triggerCharacter };
+                    }
+                    else {
+                        return { kind: 'characterTyped', triggerCharacter: context.triggerCharacter };
+                    }
+                }
+                else {
+                    return { kind: 'invoked' };
+                }
+            case languages.SignatureHelpTriggerKind.ContentChange:
+                return context.isRetrigger ? { kind: 'retrigger' } : { kind: 'invoked' };
+            case languages.SignatureHelpTriggerKind.Invoke:
+            default:
+                return { kind: 'invoked' };
+        }
+    };
+    SignatureHelpAdapter.prototype.provideSignatureHelp = function (model, position, token, context) {
         return __awaiter(this, void 0, void 0, function () {
             var resource, offset, worker, info, ret;
             return __generator(this, function (_a) {
@@ -550,7 +622,12 @@ var SignatureHelpAdapter = /** @class */ (function (_super) {
                         return [4 /*yield*/, this._worker(resource)];
                     case 1:
                         worker = _a.sent();
-                        return [4 /*yield*/, worker.getSignatureHelpItems(resource.toString(), offset)];
+                        if (model.isDisposed()) {
+                            return [2 /*return*/];
+                        }
+                        return [4 /*yield*/, worker.getSignatureHelpItems(resource.toString(), offset, {
+                                triggerReason: SignatureHelpAdapter._toSignatureHelpTriggerReason(context)
+                            })];
                     case 2:
                         info = _a.sent();
                         if (!info || model.isDisposed()) {
@@ -615,6 +692,9 @@ var QuickInfoAdapter = /** @class */ (function (_super) {
                         return [4 /*yield*/, this._worker(resource)];
                     case 1:
                         worker = _a.sent();
+                        if (model.isDisposed()) {
+                            return [2 /*return*/];
+                        }
                         return [4 /*yield*/, worker.getQuickInfoAtPosition(resource.toString(), offset)];
                     case 2:
                         info = _a.sent();
@@ -660,6 +740,9 @@ var OccurrencesAdapter = /** @class */ (function (_super) {
                         return [4 /*yield*/, this._worker(resource)];
                     case 1:
                         worker = _a.sent();
+                        if (model.isDisposed()) {
+                            return [2 /*return*/];
+                        }
                         return [4 /*yield*/, worker.getOccurrencesAtPosition(resource.toString(), offset)];
                     case 2:
                         entries = _a.sent();
@@ -691,7 +774,7 @@ var DefinitionAdapter = /** @class */ (function (_super) {
     }
     DefinitionAdapter.prototype.provideDefinition = function (model, position, token) {
         return __awaiter(this, void 0, void 0, function () {
-            var resource, offset, worker, entries, result, _i, entries_1, entry, uri, refModel;
+            var resource, offset, worker, entries, result, _i, entries_1, entry, refModel;
             return __generator(this, function (_a) {
                 switch (_a.label) {
                     case 0:
@@ -700,6 +783,9 @@ var DefinitionAdapter = /** @class */ (function (_super) {
                         return [4 /*yield*/, this._worker(resource)];
                     case 1:
                         worker = _a.sent();
+                        if (model.isDisposed()) {
+                            return [2 /*return*/];
+                        }
                         return [4 /*yield*/, worker.getDefinitionAtPosition(resource.toString(), offset)];
                     case 2:
                         entries = _a.sent();
@@ -717,11 +803,10 @@ var DefinitionAdapter = /** @class */ (function (_super) {
                         result = [];
                         for (_i = 0, entries_1 = entries; _i < entries_1.length; _i++) {
                             entry = entries_1[_i];
-                            uri = Uri.parse(entry.fileName);
-                            refModel = this._libFiles.getOrCreateModel(uri);
+                            refModel = this._libFiles.getOrCreateModel(entry.fileName);
                             if (refModel) {
                                 result.push({
-                                    uri: uri,
+                                    uri: refModel.uri,
                                     range: this._textSpanToRange(refModel, entry.textSpan)
                                 });
                             }
@@ -744,7 +829,7 @@ var ReferenceAdapter = /** @class */ (function (_super) {
     }
     ReferenceAdapter.prototype.provideReferences = function (model, position, context, token) {
         return __awaiter(this, void 0, void 0, function () {
-            var resource, offset, worker, entries, result, _i, entries_2, entry, uri, refModel;
+            var resource, offset, worker, entries, result, _i, entries_2, entry, refModel;
             return __generator(this, function (_a) {
                 switch (_a.label) {
                     case 0:
@@ -753,6 +838,9 @@ var ReferenceAdapter = /** @class */ (function (_super) {
                         return [4 /*yield*/, this._worker(resource)];
                     case 1:
                         worker = _a.sent();
+                        if (model.isDisposed()) {
+                            return [2 /*return*/];
+                        }
                         return [4 /*yield*/, worker.getReferencesAtPosition(resource.toString(), offset)];
                     case 2:
                         entries = _a.sent();
@@ -770,11 +858,10 @@ var ReferenceAdapter = /** @class */ (function (_super) {
                         result = [];
                         for (_i = 0, entries_2 = entries; _i < entries_2.length; _i++) {
                             entry = entries_2[_i];
-                            uri = Uri.parse(entry.fileName);
-                            refModel = this._libFiles.getOrCreateModel(uri);
+                            refModel = this._libFiles.getOrCreateModel(entry.fileName);
                             if (refModel) {
                                 result.push({
-                                    uri: uri,
+                                    uri: refModel.uri,
                                     range: this._textSpanToRange(refModel, entry.textSpan)
                                 });
                             }
@@ -804,6 +891,9 @@ var OutlineAdapter = /** @class */ (function (_super) {
                         return [4 /*yield*/, this._worker(resource)];
                     case 1:
                         worker = _a.sent();
+                        if (model.isDisposed()) {
+                            return [2 /*return*/];
+                        }
                         return [4 /*yield*/, worker.getNavigationBarItems(resource.toString())];
                     case 2:
                         items = _a.sent();
@@ -817,9 +907,10 @@ var OutlineAdapter = /** @class */ (function (_super) {
                                 kind: (outlineTypeTable[item.kind] || languages.SymbolKind.Variable),
                                 range: _this._textSpanToRange(model, item.spans[0]),
                                 selectionRange: _this._textSpanToRange(model, item.spans[0]),
-                                tags: [],
-                                containerName: containerLabel
+                                tags: []
                             };
+                            if (containerLabel)
+                                result.containerName = containerLabel;
                             if (item.childItems && item.childItems.length > 0) {
                                 for (var _i = 0, _a = item.childItems; _i < _a.length; _i++) {
                                     var child = _a[_i];
@@ -945,6 +1036,9 @@ var FormatAdapter = /** @class */ (function (_super) {
                         return [4 /*yield*/, this._worker(resource)];
                     case 1:
                         worker = _a.sent();
+                        if (model.isDisposed()) {
+                            return [2 /*return*/];
+                        }
                         return [4 /*yield*/, worker.getFormattingEditsForRange(resource.toString(), startOffset, endOffset, FormatHelper._convertOptions(options))];
                     case 2:
                         edits = _a.sent();
@@ -983,6 +1077,9 @@ var FormatOnTypeAdapter = /** @class */ (function (_super) {
                         return [4 /*yield*/, this._worker(resource)];
                     case 1:
                         worker = _a.sent();
+                        if (model.isDisposed()) {
+                            return [2 /*return*/];
+                        }
                         return [4 /*yield*/, worker.getFormattingEditsAfterKeystroke(resource.toString(), offset, ch, FormatHelper._convertOptions(options))];
                     case 2:
                         edits = _a.sent();
@@ -1027,6 +1124,9 @@ var CodeActionAdaptor = /** @class */ (function (_super) {
                         return [4 /*yield*/, this._worker(resource)];
                     case 1:
                         worker = _a.sent();
+                        if (model.isDisposed()) {
+                            return [2 /*return*/];
+                        }
                         return [4 /*yield*/, worker.getCodeFixesAtPosition(resource.toString(), start, end, errorCodes, formatOptions)];
                     case 2:
                         codeFixes = _a.sent();
@@ -1078,12 +1178,14 @@ export { CodeActionAdaptor };
 // --- rename ----
 var RenameAdapter = /** @class */ (function (_super) {
     __extends(RenameAdapter, _super);
-    function RenameAdapter() {
-        return _super !== null && _super.apply(this, arguments) || this;
+    function RenameAdapter(_libFiles, worker) {
+        var _this = _super.call(this, worker) || this;
+        _this._libFiles = _libFiles;
+        return _this;
     }
     RenameAdapter.prototype.provideRenameEdits = function (model, position, newName, token) {
         return __awaiter(this, void 0, void 0, function () {
-            var resource, fileName, offset, worker, renameInfo, renameLocations, edits, _i, renameLocations_1, renameLocation;
+            var resource, fileName, offset, worker, renameInfo, renameLocations, edits, _i, renameLocations_1, renameLocation, model_1;
             return __generator(this, function (_a) {
                 switch (_a.label) {
                     case 0:
@@ -1093,6 +1195,9 @@ var RenameAdapter = /** @class */ (function (_super) {
                         return [4 /*yield*/, this._worker(resource)];
                     case 1:
                         worker = _a.sent();
+                        if (model.isDisposed()) {
+                            return [2 /*return*/];
+                        }
                         return [4 /*yield*/, worker.getRenameInfo(fileName, offset, {
                                 allowRenameOfImportPath: false
                             })];
@@ -1120,13 +1225,19 @@ var RenameAdapter = /** @class */ (function (_super) {
                         edits = [];
                         for (_i = 0, renameLocations_1 = renameLocations; _i < renameLocations_1.length; _i++) {
                             renameLocation = renameLocations_1[_i];
-                            edits.push({
-                                resource: Uri.parse(renameLocation.fileName),
-                                edit: {
-                                    range: this._textSpanToRange(model, renameLocation.textSpan),
-                                    text: newName
-                                }
-                            });
+                            model_1 = this._libFiles.getOrCreateModel(renameLocation.fileName);
+                            if (model_1) {
+                                edits.push({
+                                    resource: model_1.uri,
+                                    edit: {
+                                        range: this._textSpanToRange(model_1, renameLocation.textSpan),
+                                        text: newName
+                                    }
+                                });
+                            }
+                            else {
+                                throw new Error("Unknown file " + renameLocation.fileName + ".");
+                            }
                         }
                         return [2 /*return*/, { edits: edits }];
                 }
@@ -1136,3 +1247,55 @@ var RenameAdapter = /** @class */ (function (_super) {
     return RenameAdapter;
 }(Adapter));
 export { RenameAdapter };
+// --- inlay hints ----
+var InlayHintsAdapter = /** @class */ (function (_super) {
+    __extends(InlayHintsAdapter, _super);
+    function InlayHintsAdapter() {
+        return _super !== null && _super.apply(this, arguments) || this;
+    }
+    InlayHintsAdapter.prototype.provideInlayHints = function (model, range, token) {
+        return __awaiter(this, void 0, void 0, function () {
+            var resource, fileName, start, end, worker, hints;
+            var _this = this;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        resource = model.uri;
+                        fileName = resource.toString();
+                        start = model.getOffsetAt({
+                            lineNumber: range.startLineNumber,
+                            column: range.startColumn
+                        });
+                        end = model.getOffsetAt({
+                            lineNumber: range.endLineNumber,
+                            column: range.endColumn
+                        });
+                        return [4 /*yield*/, this._worker(resource)];
+                    case 1:
+                        worker = _a.sent();
+                        if (model.isDisposed()) {
+                            return [2 /*return*/, []];
+                        }
+                        return [4 /*yield*/, worker.provideInlayHints(fileName, start, end)];
+                    case 2:
+                        hints = _a.sent();
+                        return [2 /*return*/, hints.map(function (hint) {
+                                return __assign(__assign({}, hint), { position: model.getPositionAt(hint.position), kind: _this._convertHintKind(hint.kind) });
+                            })];
+                }
+            });
+        });
+    };
+    InlayHintsAdapter.prototype._convertHintKind = function (kind) {
+        switch (kind) {
+            case 'Parameter':
+                return languages.InlayHintKind.Parameter;
+            case 'Type':
+                return languages.InlayHintKind.Type;
+            default:
+                return languages.InlayHintKind.Other;
+        }
+    };
+    return InlayHintsAdapter;
+}(Adapter));
+export { InlayHintsAdapter };

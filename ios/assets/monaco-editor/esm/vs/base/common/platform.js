@@ -2,10 +2,12 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
+var _a;
 const LANGUAGE_DEFAULT = 'en';
 let _isWindows = false;
 let _isMacintosh = false;
 let _isLinux = false;
+let _isLinuxSnap = false;
 let _isNative = false;
 let _isWeb = false;
 let _isIOS = false;
@@ -13,8 +15,18 @@ let _locale = undefined;
 let _language = LANGUAGE_DEFAULT;
 let _translationsConfigFile = undefined;
 let _userAgent = undefined;
-const isElectronRenderer = (typeof process !== 'undefined' && typeof process.versions !== 'undefined' && typeof process.versions.electron !== 'undefined' && process.type === 'renderer');
-// OS detection
+export const globals = (typeof self === 'object' ? self : typeof global === 'object' ? global : {});
+let nodeProcess = undefined;
+if (typeof globals.vscode !== 'undefined' && typeof globals.vscode.process !== 'undefined') {
+    // Native environment (sandboxed)
+    nodeProcess = globals.vscode.process;
+}
+else if (typeof process !== 'undefined') {
+    // Native environment (non-sandboxed)
+    nodeProcess = process;
+}
+const isElectronRenderer = typeof ((_a = nodeProcess === null || nodeProcess === void 0 ? void 0 : nodeProcess.versions) === null || _a === void 0 ? void 0 : _a.electron) === 'string' && nodeProcess.type === 'renderer';
+// Web environment
 if (typeof navigator === 'object' && !isElectronRenderer) {
     _userAgent = navigator.userAgent;
     _isWindows = _userAgent.indexOf('Windows') >= 0;
@@ -25,13 +37,15 @@ if (typeof navigator === 'object' && !isElectronRenderer) {
     _locale = navigator.language;
     _language = _locale;
 }
-else if (typeof process === 'object') {
-    _isWindows = (process.platform === 'win32');
-    _isMacintosh = (process.platform === 'darwin');
-    _isLinux = (process.platform === 'linux');
+// Native environment
+else if (typeof nodeProcess === 'object') {
+    _isWindows = (nodeProcess.platform === 'win32');
+    _isMacintosh = (nodeProcess.platform === 'darwin');
+    _isLinux = (nodeProcess.platform === 'linux');
+    _isLinuxSnap = _isLinux && !!nodeProcess.env['SNAP'] && !!nodeProcess.env['SNAP_REVISION'];
     _locale = LANGUAGE_DEFAULT;
     _language = LANGUAGE_DEFAULT;
-    const rawNlsConfig = process.env['VSCODE_NLS_CONFIG'];
+    const rawNlsConfig = nodeProcess.env['VSCODE_NLS_CONFIG'];
     if (rawNlsConfig) {
         try {
             const nlsConfig = JSON.parse(rawNlsConfig);
@@ -45,6 +59,10 @@ else if (typeof process === 'object') {
         }
     }
     _isNative = true;
+}
+// Unknown environment
+else {
+    console.error('Unable to resolve platform.');
 }
 let _platform = 0 /* Web */;
 if (_isMacintosh) {
@@ -62,8 +80,7 @@ export const isLinux = _isLinux;
 export const isNative = _isNative;
 export const isWeb = _isWeb;
 export const isIOS = _isIOS;
-const _globals = (typeof self === 'object' ? self : typeof global === 'object' ? global : {});
-export const globals = _globals;
+export const userAgent = _userAgent;
 export const setImmediate = (function defineSetImmediate() {
     if (globals.setImmediate) {
         return globals.setImmediate.bind(globals);
@@ -92,8 +109,8 @@ export const setImmediate = (function defineSetImmediate() {
             globals.postMessage({ vscodeSetImmediateId: myId }, '*');
         };
     }
-    if (typeof process !== 'undefined' && typeof process.nextTick === 'function') {
-        return process.nextTick.bind(process);
+    if (typeof (nodeProcess === null || nodeProcess === void 0 ? void 0 : nodeProcess.nextTick) === 'function') {
+        return nodeProcess.nextTick.bind(nodeProcess);
     }
     const _promise = Promise.resolve();
     return (callback) => _promise.then(callback);

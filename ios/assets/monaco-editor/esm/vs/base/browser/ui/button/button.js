@@ -1,16 +1,12 @@
-/*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the MIT License. See License.txt in the project root for license information.
- *--------------------------------------------------------------------------------------------*/
-import './button.css';
-import * as DOM from '../../dom.js';
+import { addDisposableListener, EventHelper, EventType, reset, trackFocus } from '../../dom.js';
 import { StandardKeyboardEvent } from '../../keyboardEvent.js';
+import { EventType as TouchEventType, Gesture } from '../../touch.js';
+import { renderLabelWithIcons } from '../iconLabel/iconLabels.js';
 import { Color } from '../../../common/color.js';
-import { mixin } from '../../../common/objects.js';
 import { Emitter } from '../../../common/event.js';
 import { Disposable } from '../../../common/lifecycle.js';
-import { Gesture, EventType } from '../../touch.js';
-import { renderCodiconsAsElement } from '../../codicons.js';
+import { mixin } from '../../../common/objects.js';
+import './button.css';
 const defaultOptions = {
     buttonBackground: Color.fromHex('#0E639C'),
     buttonHoverBackground: Color.fromHex('#006BB3'),
@@ -30,21 +26,21 @@ export class Button extends Disposable {
         this.buttonSecondaryHoverBackground = this.options.buttonSecondaryHoverBackground;
         this.buttonBorder = this.options.buttonBorder;
         this._element = document.createElement('a');
-        DOM.addClass(this._element, 'monaco-button');
+        this._element.classList.add('monaco-button');
         this._element.tabIndex = 0;
         this._element.setAttribute('role', 'button');
         container.appendChild(this._element);
         this._register(Gesture.addTarget(this._element));
-        [DOM.EventType.CLICK, EventType.Tap].forEach(eventType => {
-            this._register(DOM.addDisposableListener(this._element, eventType, e => {
+        [EventType.CLICK, TouchEventType.Tap].forEach(eventType => {
+            this._register(addDisposableListener(this._element, eventType, e => {
                 if (!this.enabled) {
-                    DOM.EventHelper.stop(e);
+                    EventHelper.stop(e);
                     return;
                 }
                 this._onDidClick.fire(e);
             }));
         });
-        this._register(DOM.addDisposableListener(this._element, DOM.EventType.KEY_DOWN, e => {
+        this._register(addDisposableListener(this._element, EventType.KEY_DOWN, e => {
             const event = new StandardKeyboardEvent(e);
             let eventHandled = false;
             if (this.enabled && (event.equals(3 /* Enter */) || event.equals(10 /* Space */))) {
@@ -56,19 +52,19 @@ export class Button extends Disposable {
                 eventHandled = true;
             }
             if (eventHandled) {
-                DOM.EventHelper.stop(event, true);
+                EventHelper.stop(event, true);
             }
         }));
-        this._register(DOM.addDisposableListener(this._element, DOM.EventType.MOUSE_OVER, e => {
-            if (!DOM.hasClass(this._element, 'disabled')) {
+        this._register(addDisposableListener(this._element, EventType.MOUSE_OVER, e => {
+            if (!this._element.classList.contains('disabled')) {
                 this.setHoverBackground();
             }
         }));
-        this._register(DOM.addDisposableListener(this._element, DOM.EventType.MOUSE_OUT, e => {
+        this._register(addDisposableListener(this._element, EventType.MOUSE_OUT, e => {
             this.applyStyles(); // restore standard styles
         }));
         // Also set hover background when button is focused for feedback
-        this.focusTracker = this._register(DOM.trackFocus(this._element));
+        this.focusTracker = this._register(trackFocus(this._element));
         this._register(this.focusTracker.onDidFocus(() => this.setHoverBackground()));
         this._register(this.focusTracker.onDidBlur(() => this.applyStyles())); // restore standard styles
         this.applyStyles();
@@ -119,11 +115,9 @@ export class Button extends Disposable {
         return this._element;
     }
     set label(value) {
-        if (!DOM.hasClass(this._element, 'monaco-text-button')) {
-            DOM.addClass(this._element, 'monaco-text-button');
-        }
-        if (this.options.supportCodicons) {
-            DOM.reset(this._element, ...renderCodiconsAsElement(value));
+        this._element.classList.add('monaco-text-button');
+        if (this.options.supportIcons) {
+            reset(this._element, ...renderLabelWithIcons(value));
         }
         else {
             this._element.textContent = value;
@@ -137,17 +131,16 @@ export class Button extends Disposable {
     }
     set enabled(value) {
         if (value) {
-            DOM.removeClass(this._element, 'disabled');
+            this._element.classList.remove('disabled');
             this._element.setAttribute('aria-disabled', String(false));
             this._element.tabIndex = 0;
         }
         else {
-            DOM.addClass(this._element, 'disabled');
+            this._element.classList.add('disabled');
             this._element.setAttribute('aria-disabled', String(true));
-            DOM.removeTabIndexAndUpdateFocus(this._element);
         }
     }
     get enabled() {
-        return !DOM.hasClass(this._element, 'disabled');
+        return !this._element.classList.contains('disabled');
     }
 }

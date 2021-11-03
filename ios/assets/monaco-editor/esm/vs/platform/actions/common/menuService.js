@@ -11,7 +11,8 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __param = (this && this.__param) || function (paramIndex, decorator) {
     return function (target, key) { decorator(target, key, paramIndex); }
 };
-import { Emitter, Event } from '../../../base/common/event.js';
+import { RunOnceScheduler } from '../../../base/common/async.js';
+import { Emitter } from '../../../base/common/event.js';
 import { DisposableStore } from '../../../base/common/lifecycle.js';
 import { IMenuService, isIMenuItem, MenuItemAction, MenuRegistry, SubmenuItemAction } from './actions.js';
 import { ICommandService } from '../../commands/common/commands.js';
@@ -21,8 +22,14 @@ let MenuService = class MenuService {
         this._commandService = _commandService;
         //
     }
-    createMenu(id, contextKeyService) {
-        return new Menu(id, this._commandService, contextKeyService, this);
+    /**
+     * Create a new menu for the given menu identifier. A menu sends events when it's entries
+     * have changed (placement, enablement, checked-state). By default it does send events for
+     * sub menu entries. That is more expensive and must be explicitly enabled with the
+     * `emitEventsForSubmenuChanges` flag.
+     */
+    createMenu(id, contextKeyService, options) {
+        return new Menu(id, Object.assign({ emitEventsForSubmenuChanges: false, eventDebounceDelay: 50 }, options), this._commandService, contextKeyService, this);
     }
 };
 MenuService = __decorate([
@@ -30,25 +37,51 @@ MenuService = __decorate([
 ], MenuService);
 export { MenuService };
 let Menu = class Menu {
-    constructor(_id, _commandService, _contextKeyService, _menuService) {
+    constructor(_id, _options, _commandService, _contextKeyService, _menuService) {
         this._id = _id;
+        this._options = _options;
         this._commandService = _commandService;
         this._contextKeyService = _contextKeyService;
         this._menuService = _menuService;
-        this._onDidChange = new Emitter();
-        this._dispoables = new DisposableStore();
+        this._disposables = new DisposableStore();
         this._menuGroups = [];
         this._contextKeys = new Set();
         this._build();
-        // rebuild this menu whenever the menu registry reports an
-        // event for this MenuId
-        this._dispoables.add(Event.debounce(Event.filter(MenuRegistry.onDidChangeMenu, set => set.has(this._id)), () => { }, 50)(this._build, this));
-        // when context keys change we need to check if the menu also
-        // has changed
-        this._dispoables.add(Event.debounce(this._contextKeyService.onDidChangeContext, (last, event) => last || event.affectsSome(this._contextKeys), 50)(e => e && this._onDidChange.fire(undefined), this));
+        // Rebuild this menu whenever the menu registry reports an event for this MenuId.
+        // This usually happen while code and extensions are loaded and affects the over
+        // structure of the menu
+        const rebuildMenuSoon = new RunOnceScheduler(() => {
+            this._build();
+            this._onDidChange.fire(this);
+        }, _options.eventDebounceDelay);
+        this._disposables.add(rebuildMenuSoon);
+        this._disposables.add(MenuRegistry.onDidChangeMenu(e => {
+            if (e.has(_id)) {
+                rebuildMenuSoon.schedule();
+            }
+        }));
+        // When context keys change we need to check if the menu also has changed. However,
+        // we only do that when someone listens on this menu because (1) context key events are
+        // firing often and (2) menu are often leaked
+        const contextKeyListener = this._disposables.add(new DisposableStore());
+        const startContextKeyListener = () => {
+            const fireChangeSoon = new RunOnceScheduler(() => this._onDidChange.fire(this), _options.eventDebounceDelay);
+            contextKeyListener.add(fireChangeSoon);
+            contextKeyListener.add(_contextKeyService.onDidChangeContext(e => {
+                if (e.affectsSome(this._contextKeys)) {
+                    fireChangeSoon.schedule();
+                }
+            }));
+        };
+        this._onDidChange = new Emitter({
+            // start/stop context key listener
+            onFirstListenerAdd: startContextKeyListener,
+            onLastListenerRemove: contextKeyListener.clear.bind(contextKeyListener)
+        });
+        this.onDidChange = this._onDidChange.event;
     }
     dispose() {
-        this._dispoables.dispose();
+        this._disposables.dispose();
         this._onDidChange.dispose();
     }
     _build() {
@@ -58,7 +91,7 @@ let Menu = class Menu {
         const menuItems = MenuRegistry.getMenuItems(this._id);
         let group;
         menuItems.sort(Menu._compareMenuItems);
-        for (let item of menuItems) {
+        for (const item of menuItems) {
             // group by groupId
             const groupName = item.group || '';
             if (!group || group[0] !== groupName) {
@@ -67,21 +100,27 @@ let Menu = class Menu {
             }
             group[1].push(item);
             // keep keys for eventing
-            Menu._fillInKbExprKeys(item.when, this._contextKeys);
+            this._collectContextKeys(item);
+        }
+    }
+    _collectContextKeys(item) {
+        Menu._fillInKbExprKeys(item.when, this._contextKeys);
+        if (isIMenuItem(item)) {
             // keep precondition keys for event if applicable
-            if (isIMenuItem(item) && item.command.precondition) {
+            if (item.command.precondition) {
                 Menu._fillInKbExprKeys(item.command.precondition, this._contextKeys);
             }
             // keep toggled keys for event if applicable
-            if (isIMenuItem(item) && item.command.toggled) {
+            if (item.command.toggled) {
                 const toggledExpression = item.command.toggled.condition || item.command.toggled;
                 Menu._fillInKbExprKeys(toggledExpression, this._contextKeys);
             }
         }
-        this._onDidChange.fire(this);
-    }
-    get onDidChange() {
-        return this._onDidChange.event;
+        else if (this._options.emitEventsForSubmenuChanges) {
+            // recursively collect context keys from submenus so that this
+            // menu fires events when context key changes affect submenus
+            MenuRegistry.getMenuItems(item.submenu).forEach(this._collectContextKeys, this);
+        }
     }
     getActions(options) {
         const result = [];
@@ -146,13 +185,13 @@ let Menu = class Menu {
         return Menu._compareTitles(isIMenuItem(a) ? a.command.title : a.title, isIMenuItem(b) ? b.command.title : b.title);
     }
     static _compareTitles(a, b) {
-        const aStr = typeof a === 'string' ? a : a.value;
-        const bStr = typeof b === 'string' ? b : b.value;
+        const aStr = typeof a === 'string' ? a : a.original;
+        const bStr = typeof b === 'string' ? b : b.original;
         return aStr.localeCompare(bStr);
     }
 };
 Menu = __decorate([
-    __param(1, ICommandService),
-    __param(2, IContextKeyService),
-    __param(3, IMenuService)
+    __param(2, ICommandService),
+    __param(3, IContextKeyService),
+    __param(4, IMenuService)
 ], Menu);

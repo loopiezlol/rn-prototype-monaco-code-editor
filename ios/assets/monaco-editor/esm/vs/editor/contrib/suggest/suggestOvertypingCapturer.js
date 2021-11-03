@@ -41,7 +41,7 @@ export class OvertypingCapturer {
             this._empty = false;
         }));
         this._disposables.add(suggestModel.onDidCancel(e => {
-            if (!this._empty) {
+            if (!this._empty && !e.retrigger) {
                 this._empty = true;
             }
         }));

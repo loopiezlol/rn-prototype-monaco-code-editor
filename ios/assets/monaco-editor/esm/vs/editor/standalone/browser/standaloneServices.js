@@ -31,7 +31,7 @@ import { ServiceCollection } from '../../../platform/instantiation/common/servic
 import { IKeybindingService } from '../../../platform/keybinding/common/keybinding.js';
 import { ILabelService } from '../../../platform/label/common/label.js';
 import { IListService, ListService } from '../../../platform/list/browser/listService.js';
-import { ConsoleLogService, ILogService } from '../../../platform/log/common/log.js';
+import { ConsoleLogger, ILogService, LogService } from '../../../platform/log/common/log.js';
 import { MarkerService } from '../../../platform/markers/common/markerService.js';
 import { IMarkerService } from '../../../platform/markers/common/markers.js';
 import { INotificationService } from '../../../platform/notification/common/notification.js';
@@ -46,14 +46,13 @@ import { MarkerDecorationsService } from '../../common/services/markerDecoration
 import { IAccessibilityService } from '../../../platform/accessibility/common/accessibility.js';
 import { ILayoutService } from '../../../platform/layout/browser/layoutService.js';
 import { getSingletonServiceDescriptors } from '../../../platform/instantiation/common/extensions.js';
-import { AccessibilityService } from '../../../platform/accessibility/common/accessibilityService.js';
+import { AccessibilityService } from '../../../platform/accessibility/browser/accessibilityService.js';
 import { IClipboardService } from '../../../platform/clipboard/common/clipboardService.js';
 import { BrowserClipboardService } from '../../../platform/clipboard/browser/clipboardService.js';
 import { IUndoRedoService } from '../../../platform/undoRedo/common/undoRedo.js';
 import { UndoRedoService } from '../../../platform/undoRedo/common/undoRedoService.js';
 import { StandaloneQuickInputServiceImpl } from './quickInput/standaloneQuickInputServiceImpl.js';
 import { IQuickInputService } from '../../../platform/quickinput/common/quickInput.js';
-import { IStorageKeysSyncRegistryService, StorageKeysSyncRegistryService } from '../../../platform/userDataSync/common/storageKeys.js';
 export var StaticServices;
 (function (StaticServices) {
     const _serviceCollection = new ServiceCollection();
@@ -121,14 +120,14 @@ export var StaticServices;
     StaticServices.markerService = define(IMarkerService, () => new MarkerService());
     StaticServices.modeService = define(IModeService, (o) => new ModeServiceImpl());
     StaticServices.standaloneThemeService = define(IStandaloneThemeService, () => new StandaloneThemeServiceImpl());
-    StaticServices.logService = define(ILogService, () => new ConsoleLogService());
+    StaticServices.logService = define(ILogService, () => new LogService(new ConsoleLogger()));
     StaticServices.undoRedoService = define(IUndoRedoService, (o) => new UndoRedoService(StaticServices.dialogService.get(o), StaticServices.notificationService.get(o)));
     StaticServices.modelService = define(IModelService, (o) => new ModelServiceImpl(StaticServices.configurationService.get(o), StaticServices.resourcePropertiesService.get(o), StaticServices.standaloneThemeService.get(o), StaticServices.logService.get(o), StaticServices.undoRedoService.get(o)));
     StaticServices.markerDecorationsService = define(IMarkerDecorationsService, (o) => new MarkerDecorationsService(StaticServices.modelService.get(o), StaticServices.markerService.get(o)));
-    StaticServices.codeEditorService = define(ICodeEditorService, (o) => new StandaloneCodeEditorServiceImpl(StaticServices.standaloneThemeService.get(o)));
+    StaticServices.contextKeyService = define(IContextKeyService, (o) => new ContextKeyService(StaticServices.configurationService.get(o)));
+    StaticServices.codeEditorService = define(ICodeEditorService, (o) => new StandaloneCodeEditorServiceImpl(null, StaticServices.contextKeyService.get(o), StaticServices.standaloneThemeService.get(o)));
     StaticServices.editorProgressService = define(IEditorProgressService, () => new SimpleEditorProgressService());
     StaticServices.storageService = define(IStorageService, () => new InMemoryStorageService());
-    StaticServices.storageSyncService = define(IStorageKeysSyncRegistryService, () => new StorageKeysSyncRegistryService());
     StaticServices.editorWorkerService = define(IEditorWorkerService, (o) => new EditorWorkerServiceImpl(StaticServices.modelService.get(o), StaticServices.resourceConfigurationService.get(o), StaticServices.logService.get(o)));
 })(StaticServices || (StaticServices = {}));
 export class DynamicStandaloneServices extends Disposable {
@@ -142,6 +141,7 @@ export class DynamicStandaloneServices extends Disposable {
         const telemetryService = this.get(ITelemetryService);
         const themeService = this.get(IThemeService);
         const logService = this.get(ILogService);
+        const contextKeyService = this.get(IContextKeyService);
         let ensure = (serviceId, factory) => {
             let value = null;
             if (overrides) {
@@ -153,7 +153,6 @@ export class DynamicStandaloneServices extends Disposable {
             this._serviceCollection.set(serviceId, value);
             return value;
         };
-        let contextKeyService = ensure(IContextKeyService, () => this._register(new ContextKeyService(configurationService)));
         ensure(IAccessibilityService, () => new AccessibilityService(contextKeyService, configurationService));
         ensure(IListService, () => new ListService(themeService));
         let commandService = ensure(ICommandService, () => new StandaloneCommandService(this._instantiationService));

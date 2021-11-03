@@ -169,6 +169,7 @@ function migrateOptions(options) {
         mapping['method'] = 'showMethods';
         mapping['function'] = 'showFunctions';
         mapping['constructor'] = 'showConstructors';
+        mapping['deprecated'] = 'showDeprecated';
         mapping['field'] = 'showFields';
         mapping['variable'] = 'showVariables';
         mapping['class'] = 'showClasses';
@@ -235,6 +236,16 @@ function migrateOptions(options) {
     else if (matchBrackets === false) {
         options.matchBrackets = 'never';
     }
+    const { renderIndentGuides, highlightActiveIndentGuide } = options;
+    if (!options.guides) {
+        options.guides = {};
+    }
+    if (renderIndentGuides !== undefined) {
+        options.guides.indentation = !!renderIndentGuides;
+    }
+    if (highlightActiveIndentGuide !== undefined) {
+        options.guides.highlightActiveIndentation = !!highlightActiveIndentGuide;
+    }
 }
 function deepCloneAndMigrateOptions(_options) {
     const options = objects.deepClone(_options);
@@ -261,8 +272,7 @@ export class CommonEditorConfiguration extends Disposable {
     }
     observeReferenceElement(dimension) {
     }
-    dispose() {
-        super.dispose();
+    updatePixelRatio() {
     }
     _recomputeOptions() {
         const oldOptions = this.options;
@@ -286,7 +296,7 @@ export class CommonEditorConfiguration extends Disposable {
     }
     _computeInternalOptions() {
         const partialEnv = this._getEnvConfiguration();
-        const bareFontInfo = BareFontInfo.createFromValidatedSettings(this._validatedOptions, partialEnv.zoomLevel, this.isSimpleWidget);
+        const bareFontInfo = BareFontInfo.createFromValidatedSettings(this._validatedOptions, partialEnv.zoomLevel, partialEnv.pixelRatio, this.isSimpleWidget);
         const env = {
             memory: this._computeOptionsMemory,
             outerWidth: partialEnv.outerWidth,
@@ -423,6 +433,16 @@ const editorConfiguration = Object.assign(Object.assign({}, editorConfigurationB
             default: true,
             description: nls.localize('wordBasedSuggestions', "Controls whether completions should be computed based on words in the document.")
         },
+        'editor.wordBasedSuggestionsMode': {
+            enum: ['currentDocument', 'matchingDocuments', 'allDocuments'],
+            default: 'matchingDocuments',
+            enumDescriptions: [
+                nls.localize('wordBasedSuggestionsMode.currentDocument', 'Only suggest words from the active document.'),
+                nls.localize('wordBasedSuggestionsMode.matchingDocuments', 'Suggest words from all open documents of the same language.'),
+                nls.localize('wordBasedSuggestionsMode.allDocuments', 'Suggest words from all open documents.')
+            ],
+            description: nls.localize('wordBasedSuggestionsMode', "Controls from which documents word based completions are computed.")
+        },
         'editor.semanticHighlighting.enabled': {
             enum: [true, false, 'configuredByTheme'],
             enumDescriptions: [
@@ -448,6 +468,11 @@ const editorConfiguration = Object.assign(Object.assign({}, editorConfigurationB
             default: 5000,
             description: nls.localize('maxComputationTime', "Timeout in milliseconds after which diff computation is cancelled. Use 0 for no timeout.")
         },
+        'diffEditor.maxFileSize': {
+            type: 'number',
+            default: 50,
+            description: nls.localize('maxFileSize', "Maximum file size in MB for which to compute diffs. Use 0 for no limit.")
+        },
         'diffEditor.renderSideBySide': {
             type: 'boolean',
             default: true,
@@ -467,6 +492,16 @@ const editorConfiguration = Object.assign(Object.assign({}, editorConfigurationB
             type: 'boolean',
             default: false,
             description: nls.localize('codeLens', "Controls whether the editor shows CodeLens.")
+        },
+        'diffEditor.wordWrap': {
+            type: 'string',
+            enum: ['off', 'on', 'inherit'],
+            default: 'inherit',
+            markdownEnumDescriptions: [
+                nls.localize('wordWrap.off', "Lines will never wrap."),
+                nls.localize('wordWrap.on', "Lines will wrap at the viewport width."),
+                nls.localize('wordWrap.inherit', "Lines will wrap according to the `#editor.wordWrap#` setting."),
+            ]
         }
     } });
 function isConfigurationPropertySchema(x) {

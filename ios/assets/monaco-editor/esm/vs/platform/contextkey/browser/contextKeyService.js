@@ -11,11 +11,14 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __param = (this && this.__param) || function (paramIndex, decorator) {
     return function (target, key) { decorator(target, key, paramIndex); }
 };
-import { Event, PauseableEmitter } from '../../../base/common/event.js';
-import { DisposableStore } from '../../../base/common/lifecycle.js';
+import { PauseableEmitter } from '../../../base/common/event.js';
+import { Iterable } from '../../../base/common/iterator.js';
+import { DisposableStore, MutableDisposable } from '../../../base/common/lifecycle.js';
+import { TernarySearchTree } from '../../../base/common/map.js';
+import { localize } from '../../../nls.js';
 import { CommandsRegistry } from '../../commands/common/commands.js';
 import { IConfigurationService } from '../../configuration/common/configuration.js';
-import { IContextKeyService, SET_CONTEXT_COMMAND_ID } from '../common/contextkey.js';
+import { IContextKeyService, RawContextKey, SET_CONTEXT_COMMAND_ID } from '../common/contextkey.js';
 import { KeybindingResolver } from '../../keybinding/common/keybindingResolver.js';
 const KEYBINDING_CONTEXT_ATTR = 'data-keybinding-context';
 export class Context {
@@ -68,11 +71,11 @@ class ConfigAwareContextValuesContainer extends Context {
     constructor(id, _configurationService, emitter) {
         super(id, null);
         this._configurationService = _configurationService;
-        this._values = new Map();
+        this._values = TernarySearchTree.forConfigKeys();
         this._listener = this._configurationService.onDidChangeConfiguration(event => {
             if (event.source === 6 /* DEFAULT */) {
                 // new setting, reset everything
-                const allKeys = Array.from(this._values.keys());
+                const allKeys = Array.from(Iterable.map(this._values, ([k]) => k));
                 this._values.clear();
                 emitter.fire(new ArrayContextKeyChangeEvent(allKeys));
             }
@@ -80,9 +83,14 @@ class ConfigAwareContextValuesContainer extends Context {
                 const changedKeys = [];
                 for (const configKey of event.affectedKeys) {
                     const contextKey = `config.${configKey}`;
+                    const cachedItems = this._values.findSuperstr(contextKey);
+                    if (cachedItems !== undefined) {
+                        changedKeys.push(...Iterable.map(cachedItems, ([key]) => key));
+                        this._values.deleteSuperstr(contextKey);
+                    }
                     if (this._values.has(contextKey)) {
-                        this._values.delete(contextKey);
                         changedKeys.push(contextKey);
+                        this._values.delete(contextKey);
                     }
                 }
                 emitter.fire(new ArrayContextKeyChangeEvent(changedKeys));
@@ -111,6 +119,9 @@ class ConfigAwareContextValuesContainer extends Context {
             default:
                 if (Array.isArray(configValue)) {
                     value = JSON.stringify(configValue);
+                }
+                else {
+                    value = configValue;
                 }
         }
         this._values.set(key, value);
@@ -183,6 +194,7 @@ class CompositeContextKeyChangeEvent {
 export class AbstractContextKeyService {
     constructor(myContextId) {
         this._onDidChangeContext = new PauseableEmitter({ merge: input => new CompositeContextKeyChangeEvent(input) });
+        this.onDidChangeContext = this._onDidChangeContext.event;
         this._isDisposed = false;
         this._myContextId = myContextId;
     }
@@ -191,9 +203,6 @@ export class AbstractContextKeyService {
             throw new Error(`AbstractContextKeyService has been disposed`);
         }
         return new ContextKey(this, key, defaultValue);
-    }
-    get onDidChangeContext() {
-        return this._onDidChangeContext.event;
     }
     bufferChangeEvents(callback) {
         this._onDidChangeContext.pause();
@@ -275,6 +284,7 @@ let ContextKeyService = class ContextKeyService extends AbstractContextKeyServic
         // }, 2000);
     }
     dispose() {
+        this._onDidChangeContext.dispose();
         this._isDisposed = true;
         this._toDispose.dispose();
     }
@@ -305,22 +315,32 @@ export { ContextKeyService };
 class ScopedContextKeyService extends AbstractContextKeyService {
     constructor(parent, domNode) {
         super(parent.createChildContext());
+        this._parentChangeListener = new MutableDisposable();
         this._parent = parent;
-        if (domNode) {
-            this._domNode = domNode;
-            this._domNode.setAttribute(KEYBINDING_CONTEXT_ATTR, String(this._myContextId));
+        this._updateParentChangeListener();
+        this._domNode = domNode;
+        if (this._domNode.hasAttribute(KEYBINDING_CONTEXT_ATTR)) {
+            let extraInfo = '';
+            if (this._domNode.classList) {
+                extraInfo = Array.from(this._domNode.classList.values()).join(', ');
+            }
+            console.error(`Element already has context attribute${extraInfo ? ': ' + extraInfo : ''}`);
         }
+        this._domNode.setAttribute(KEYBINDING_CONTEXT_ATTR, String(this._myContextId));
+    }
+    _updateParentChangeListener() {
+        // Forward parent events to this listener. Parent will change.
+        this._parentChangeListener.value = this._parent.onDidChangeContext(this._onDidChangeContext.fire, this._onDidChangeContext);
     }
     dispose() {
-        this._isDisposed = true;
-        this._parent.disposeContext(this._myContextId);
-        if (this._domNode) {
-            this._domNode.removeAttribute(KEYBINDING_CONTEXT_ATTR);
-            this._domNode = undefined;
+        if (this._isDisposed) {
+            return;
         }
-    }
-    get onDidChangeContext() {
-        return Event.any(this._parent.onDidChangeContext, this._onDidChangeContext.event);
+        this._onDidChangeContext.dispose();
+        this._parent.disposeContext(this._myContextId);
+        this._parentChangeListener.dispose();
+        this._domNode.removeAttribute(KEYBINDING_CONTEXT_ATTR);
+        this._isDisposed = true;
     }
     getContextValuesContainer(contextId) {
         if (this._isDisposed) {
@@ -356,4 +376,26 @@ function findContextAttr(domNode) {
 }
 CommandsRegistry.registerCommand(SET_CONTEXT_COMMAND_ID, function (accessor, contextKey, contextValue) {
     accessor.get(IContextKeyService).createKey(String(contextKey), contextValue);
+});
+CommandsRegistry.registerCommand({
+    id: 'getContextKeyInfo',
+    handler() {
+        return [...RawContextKey.all()].sort((a, b) => a.key.localeCompare(b.key));
+    },
+    description: {
+        description: localize('getContextKeyInfo', "A command that returns information about context keys"),
+        args: []
+    }
+});
+CommandsRegistry.registerCommand('_generateContextKeyInfo', function () {
+    const result = [];
+    const seen = new Set();
+    for (let info of RawContextKey.all()) {
+        if (!seen.has(info.key)) {
+            seen.add(info.key);
+            result.push(info);
+        }
+    }
+    result.sort((a, b) => a.key.localeCompare(b.key));
+    console.log(JSON.stringify(result, undefined, 2));
 });

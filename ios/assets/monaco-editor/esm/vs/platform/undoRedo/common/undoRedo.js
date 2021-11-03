@@ -10,3 +10,31 @@ export class ResourceEditStackSnapshot {
         this.elements = elements;
     }
 }
+export class UndoRedoGroup {
+    constructor() {
+        this.id = UndoRedoGroup._ID++;
+        this.order = 1;
+    }
+    nextOrder() {
+        if (this.id === 0) {
+            return 0;
+        }
+        return this.order++;
+    }
+}
+UndoRedoGroup._ID = 0;
+UndoRedoGroup.None = new UndoRedoGroup();
+export class UndoRedoSource {
+    constructor() {
+        this.id = UndoRedoSource._ID++;
+        this.order = 1;
+    }
+    nextOrder() {
+        if (this.id === 0) {
+            return 0;
+        }
+        return this.order++;
+    }
+}
+UndoRedoSource._ID = 0;
+UndoRedoSource.None = new UndoRedoSource();

@@ -2,16 +2,17 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-import './splitview.css';
-import { toDisposable, Disposable, combinedDisposable } from '../../../common/lifecycle.js';
-import { Event, Emitter } from '../../../common/event.js';
-import * as types from '../../../common/types.js';
-import * as dom from '../../dom.js';
-import { clamp } from '../../../common/numbers.js';
-import { range, firstIndex, pushToStart, pushToEnd } from '../../../common/arrays.js';
+import { $, addDisposableListener, append, scheduleAtNextAnimationFrame } from '../../dom.js';
 import { Sash } from '../sash/sash.js';
+import { SmoothScrollableElement } from '../scrollbar/scrollableElement.js';
+import { pushToEnd, pushToStart, range } from '../../../common/arrays.js';
 import { Color } from '../../../common/color.js';
-import { domEvent } from '../../event.js';
+import { Emitter, Event } from '../../../common/event.js';
+import { combinedDisposable, Disposable, toDisposable } from '../../../common/lifecycle.js';
+import { clamp } from '../../../common/numbers.js';
+import { Scrollable } from '../../../common/scrollable.js';
+import * as types from '../../../common/types.js';
+import './splitview.css';
 const defaultStyles = {
     separatorBorder: Color.transparent
 };
@@ -24,7 +25,7 @@ class ViewItem {
         if (typeof size === 'number') {
             this._size = size;
             this._cachedVisibleSize = undefined;
-            dom.addClass(container, 'visible');
+            container.classList.add('visible');
         }
         else {
             this._size = 0;
@@ -52,7 +53,7 @@ class ViewItem {
             this._cachedVisibleSize = typeof size === 'number' ? size : this.size;
             this.size = 0;
         }
-        dom.toggleClass(this.container, 'visible', visible);
+        this.container.classList.toggle('visible', visible);
         if (this.view.setVisible) {
             this.view.setVisible(visible);
         }
@@ -102,6 +103,7 @@ export var Sizing;
 })(Sizing || (Sizing = {}));
 export class SplitView extends Disposable {
     constructor(container, options = {}) {
+        var _a, _b;
         super();
         this.size = 0;
         this.contentSize = 0;
@@ -117,12 +119,24 @@ export class SplitView extends Disposable {
         this.orientation = types.isUndefined(options.orientation) ? 0 /* VERTICAL */ : options.orientation;
         this.inverseAltBehavior = !!options.inverseAltBehavior;
         this.proportionalLayout = types.isUndefined(options.proportionalLayout) ? true : !!options.proportionalLayout;
+        this.getSashOrthogonalSize = options.getSashOrthogonalSize;
         this.el = document.createElement('div');
-        dom.addClass(this.el, 'monaco-split-view2');
-        dom.addClass(this.el, this.orientation === 0 /* VERTICAL */ ? 'vertical' : 'horizontal');
+        this.el.classList.add('monaco-split-view2');
+        this.el.classList.add(this.orientation === 0 /* VERTICAL */ ? 'vertical' : 'horizontal');
         container.appendChild(this.el);
-        this.sashContainer = dom.append(this.el, dom.$('.sash-container'));
-        this.viewContainer = dom.append(this.el, dom.$('.split-view-container'));
+        this.sashContainer = append(this.el, $('.sash-container'));
+        this.viewContainer = $('.split-view-container');
+        this.scrollable = new Scrollable(125, scheduleAtNextAnimationFrame);
+        this.scrollableElement = this._register(new SmoothScrollableElement(this.viewContainer, {
+            vertical: this.orientation === 0 /* VERTICAL */ ? ((_a = options.scrollbarVisibility) !== null && _a !== void 0 ? _a : 1 /* Auto */) : 2 /* Hidden */,
+            horizontal: this.orientation === 1 /* HORIZONTAL */ ? ((_b = options.scrollbarVisibility) !== null && _b !== void 0 ? _b : 1 /* Auto */) : 2 /* Hidden */
+        }, this.scrollable));
+        this.onDidScroll = this.scrollableElement.onScroll;
+        this._register(this.onDidScroll(e => {
+            this.viewContainer.scrollTop = e.scrollTop;
+            this.viewContainer.scrollLeft = e.scrollLeft;
+        }));
+        append(this.el, this.scrollableElement.getDomNode());
         this.style(options.styles || defaultStyles);
         // We have an existing set of view, add them now
         if (options.descriptor) {
@@ -169,11 +183,11 @@ export class SplitView extends Disposable {
     }
     style(styles) {
         if (styles.separatorBorder.isTransparent()) {
-            dom.removeClass(this.el, 'separator-border');
+            this.el.classList.remove('separator-border');
             this.el.style.removeProperty('--separator-border');
         }
         else {
-            dom.addClass(this.el, 'separator-border');
+            this.el.classList.add('separator-border');
             this.el.style.setProperty('--separator-border', styles.separatorBorder.toString());
         }
     }
@@ -208,9 +222,9 @@ export class SplitView extends Disposable {
         for (const item of this.viewItems) {
             item.enabled = false;
         }
-        const index = firstIndex(this.sashItems, item => item.sash === sash);
+        const index = this.sashItems.findIndex(item => item.sash === sash);
         // This way, we can press Alt while we resize a sash, macOS style!
-        const disposable = combinedDisposable(domEvent(document.body, 'keydown')(e => resetSashDragState(this.sashDragState.current, e.altKey)), domEvent(document.body, 'keyup')(() => resetSashDragState(this.sashDragState.current, false)));
+        const disposable = combinedDisposable(addDisposableListener(document.body, 'keydown', e => resetSashDragState(this.sashDragState.current, e.altKey)), addDisposableListener(document.body, 'keyup', () => resetSashDragState(this.sashDragState.current, false)));
         const resetSashDragState = (start, alt) => {
             const sizes = this.viewItems.map(i => i.size);
             let minDelta = Number.NEGATIVE_INFINITY;
@@ -363,7 +377,7 @@ export class SplitView extends Disposable {
         }
         this.state = State.Busy;
         // Add view
-        const container = dom.$('.split-view-view');
+        const container = $('.split-view-view');
         if (index === this.viewItems.length) {
             this.viewContainer.appendChild(container);
         }
@@ -392,17 +406,10 @@ export class SplitView extends Disposable {
         this.viewItems.splice(index, 0, item);
         // Add sash
         if (this.viewItems.length > 1) {
+            let opts = { orthogonalStartSash: this.orthogonalStartSash, orthogonalEndSash: this.orthogonalEndSash };
             const sash = this.orientation === 0 /* VERTICAL */
-                ? new Sash(this.sashContainer, { getHorizontalSashTop: (sash) => this.getSashPosition(sash) }, {
-                    orientation: 1 /* HORIZONTAL */,
-                    orthogonalStartSash: this.orthogonalStartSash,
-                    orthogonalEndSash: this.orthogonalEndSash
-                })
-                : new Sash(this.sashContainer, { getVerticalSashLeft: (sash) => this.getSashPosition(sash) }, {
-                    orientation: 0 /* VERTICAL */,
-                    orthogonalStartSash: this.orthogonalStartSash,
-                    orthogonalEndSash: this.orthogonalEndSash
-                });
+                ? new Sash(this.sashContainer, { getHorizontalSashTop: s => this.getSashPosition(s), getHorizontalSashWidth: this.getSashOrthogonalSize }, Object.assign(Object.assign({}, opts), { orientation: 1 /* HORIZONTAL */ }))
+                : new Sash(this.sashContainer, { getVerticalSashLeft: s => this.getSashPosition(s), getVerticalSashHeight: this.getSashOrthogonalSize }, Object.assign(Object.assign({}, opts), { orientation: 0 /* VERTICAL */ }));
             const sashEventMapper = this.orientation === 0 /* VERTICAL */
                 ? (e) => ({ sash, start: e.startY, current: e.currentY, alt: e.altKey })
                 : (e) => ({ sash, start: e.startX, current: e.currentX, alt: e.altKey });
@@ -410,10 +417,10 @@ export class SplitView extends Disposable {
             const onStartDisposable = onStart(this.onSashStart, this);
             const onChange = Event.map(sash.onDidChange, sashEventMapper);
             const onChangeDisposable = onChange(this.onSashChange, this);
-            const onEnd = Event.map(sash.onDidEnd, () => firstIndex(this.sashItems, item => item.sash === sash));
+            const onEnd = Event.map(sash.onDidEnd, () => this.sashItems.findIndex(item => item.sash === sash));
             const onEndDisposable = onEnd(this.onSashEnd, this);
             const onDidResetDisposable = sash.onDidReset(() => {
-                const index = firstIndex(this.sashItems, item => item.sash === sash);
+                const index = this.sashItems.findIndex(item => item.sash === sash);
                 const upIndexes = range(index, -1);
                 const downIndexes = range(index + 1, this.viewItems.length);
                 const snapBeforeIndex = this.findFirstSnapIndex(upIndexes);
@@ -546,6 +553,21 @@ export class SplitView extends Disposable {
         // Layout sashes
         this.sashItems.forEach(item => item.sash.layout());
         this.updateSashEnablement();
+        this.updateScrollableElement();
+    }
+    updateScrollableElement() {
+        if (this.orientation === 0 /* VERTICAL */) {
+            this.scrollableElement.setScrollDimensions({
+                height: this.size,
+                scrollHeight: this.contentSize
+            });
+        }
+        else {
+            this.scrollableElement.setScrollDimensions({
+                width: this.size,
+                scrollWidth: this.contentSize
+            });
+        }
     }
     updateSashEnablement() {
         let previous = false;

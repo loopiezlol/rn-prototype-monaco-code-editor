@@ -8,8 +8,9 @@ import { CancellationTokenSource } from '../../../base/common/cancellation.js';
 import { LinkedList } from '../../../base/common/linkedList.js';
 import { createDecorator } from '../../../platform/instantiation/common/instantiation.js';
 import { registerSingleton } from '../../../platform/instantiation/common/extensions.js';
+import { localize } from '../../../nls.js';
 const IEditorCancellationTokens = createDecorator('IEditorCancelService');
-const ctxCancellableOperation = new RawContextKey('cancellableOperation', false);
+const ctxCancellableOperation = new RawContextKey('cancellableOperation', false, localize('cancellableOperation', 'Whether the editor runs a cancellable operation, e.g. like \'Peek References\''));
 registerSingleton(IEditorCancellationTokens, class {
     constructor() {
         this._tokens = new WeakMap();

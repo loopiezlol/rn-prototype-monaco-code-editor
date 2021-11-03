@@ -12,7 +12,8 @@ import { Registry } from '../../../platform/registry/common/platform.js';
 import { Extensions } from '../../../platform/theme/common/colorRegistry.js';
 import { Extensions as ThemingExtensions } from '../../../platform/theme/common/themeService.js';
 import { Disposable } from '../../../base/common/lifecycle.js';
-import { CodiconStyles } from '../../../base/browser/ui/codicons/codiconStyles.js';
+import { ColorScheme } from '../../../platform/theme/common/theme.js';
+import { getIconsStyleSheet } from '../../../platform/theme/browser/iconsStyleSheet.js';
 const VS_THEME_NAME = 'vs';
 const VS_DARK_THEME_NAME = 'vs-dark';
 const HC_BLACK_THEME_NAME = 'hc-black';
@@ -24,7 +25,12 @@ class StandaloneTheme {
         this.themeData = standaloneThemeData;
         let base = standaloneThemeData.base;
         if (name.length > 0) {
-            this.id = base + ' ' + name;
+            if (isBuiltinTheme(name)) {
+                this.id = name;
+            }
+            else {
+                this.id = base + ' ' + name;
+            }
             this.themeName = name;
         }
         else {
@@ -86,9 +92,9 @@ class StandaloneTheme {
     }
     get type() {
         switch (this.base) {
-            case VS_THEME_NAME: return 'light';
-            case HC_BLACK_THEME_NAME: return 'hc';
-            default: return 'dark';
+            case VS_THEME_NAME: return ColorScheme.LIGHT;
+            case HC_BLACK_THEME_NAME: return ColorScheme.HIGH_CONTRAST;
+            default: return ColorScheme.DARK;
         }
     }
     get tokenTheme() {
@@ -149,19 +155,25 @@ export class StandaloneThemeServiceImpl extends Disposable {
         this._onColorThemeChange = this._register(new Emitter());
         this.onDidColorThemeChange = this._onColorThemeChange.event;
         this._environment = Object.create(null);
+        this._autoDetectHighContrast = true;
         this._knownThemes = new Map();
         this._knownThemes.set(VS_THEME_NAME, newBuiltInTheme(VS_THEME_NAME));
         this._knownThemes.set(VS_DARK_THEME_NAME, newBuiltInTheme(VS_DARK_THEME_NAME));
         this._knownThemes.set(HC_BLACK_THEME_NAME, newBuiltInTheme(HC_BLACK_THEME_NAME));
-        this._codiconCSS = CodiconStyles.getCSS();
+        const iconsStyleSheet = getIconsStyleSheet();
+        this._codiconCSS = iconsStyleSheet.getCSS();
         this._themeCSS = '';
         this._allCSS = `${this._codiconCSS}\n${this._themeCSS}`;
         this._globalStyleElement = null;
         this._styleElements = [];
+        this._colorMapOverride = null;
         this.setTheme(VS_THEME_NAME);
-        CodiconStyles.onDidChange(() => {
-            this._codiconCSS = CodiconStyles.getCSS();
+        iconsStyleSheet.onDidChange(() => {
+            this._codiconCSS = iconsStyleSheet.getCSS();
             this._updateCSS();
+        });
+        dom.addMatchMediaChangeListener('(forced-colors: active)', () => {
+            this._updateActualTheme();
         });
     }
     registerEditorContainer(domNode) {
@@ -174,7 +186,7 @@ export class StandaloneThemeServiceImpl extends Disposable {
         if (!this._globalStyleElement) {
             this._globalStyleElement = dom.createStyleSheet();
             this._globalStyleElement.className = 'monaco-colors';
-            this._globalStyleElement.innerHTML = this._allCSS;
+            this._globalStyleElement.textContent = this._allCSS;
             this._styleElements.push(this._globalStyleElement);
         }
         return Disposable.None;
@@ -182,7 +194,7 @@ export class StandaloneThemeServiceImpl extends Disposable {
     _registerShadowDomContainer(domNode) {
         const styleElement = dom.createStyleSheet(domNode);
         styleElement.className = 'monaco-colors';
-        styleElement.innerHTML = this._allCSS;
+        styleElement.textContent = this._allCSS;
         this._styleElements.push(styleElement);
         return {
             dispose: () => {
@@ -211,12 +223,16 @@ export class StandaloneThemeServiceImpl extends Disposable {
                 }
             });
         }
-        if (this._theme && this._theme.themeName === themeName) {
+        if (this._theme.themeName === themeName) {
             this.setTheme(themeName); // refresh theme
         }
     }
     getColorTheme() {
         return this._theme;
+    }
+    setColorMapOverride(colorMapOverride) {
+        this._colorMapOverride = colorMapOverride;
+        this._updateThemeOrColorMap();
     }
     setTheme(themeName) {
         let theme;
@@ -226,11 +242,25 @@ export class StandaloneThemeServiceImpl extends Disposable {
         else {
             theme = this._knownThemes.get(VS_THEME_NAME);
         }
+        this._desiredTheme = theme;
+        this._updateActualTheme();
+    }
+    _updateActualTheme() {
+        const theme = (this._autoDetectHighContrast && window.matchMedia(`(forced-colors: active)`).matches
+            ? this._knownThemes.get(HC_BLACK_THEME_NAME)
+            : this._desiredTheme);
         if (this._theme === theme) {
             // Nothing to do
-            return theme.id;
+            return;
         }
         this._theme = theme;
+        this._updateThemeOrColorMap();
+    }
+    setAutoDetectHighContrast(autoDetectHighContrast) {
+        this._autoDetectHighContrast = autoDetectHighContrast;
+        this._updateActualTheme();
+    }
+    _updateThemeOrColorMap() {
         let cssRules = [];
         let hasRule = {};
         let ruleCollector = {
@@ -241,19 +271,17 @@ export class StandaloneThemeServiceImpl extends Disposable {
                 }
             }
         };
-        themingRegistry.getThemingParticipants().forEach(p => p(theme, ruleCollector, this._environment));
-        let tokenTheme = theme.tokenTheme;
-        let colorMap = tokenTheme.getColorMap();
+        themingRegistry.getThemingParticipants().forEach(p => p(this._theme, ruleCollector, this._environment));
+        const colorMap = this._colorMapOverride || this._theme.tokenTheme.getColorMap();
         ruleCollector.addRule(generateTokensCSSForColorMap(colorMap));
         this._themeCSS = cssRules.join('\n');
         this._updateCSS();
         TokenizationRegistry.setColorMap(colorMap);
-        this._onColorThemeChange.fire(theme);
-        return theme.id;
+        this._onColorThemeChange.fire(this._theme);
     }
     _updateCSS() {
         this._allCSS = `${this._codiconCSS}\n${this._themeCSS}`;
-        this._styleElements.forEach(styleElement => styleElement.innerHTML = this._allCSS);
+        this._styleElements.forEach(styleElement => styleElement.textContent = this._allCSS);
     }
     getFileIconTheme() {
         return {

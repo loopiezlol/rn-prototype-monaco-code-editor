@@ -11,25 +11,24 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __param = (this && this.__param) || function (paramIndex, decorator) {
     return function (target, key) { decorator(target, key, paramIndex); }
 };
-import './media/peekViewWidget.css';
 import * as dom from '../../../base/browser/dom.js';
 import { ActionBar } from '../../../base/browser/ui/actionbar/actionbar.js';
 import { Action } from '../../../base/common/actions.js';
+import { Codicon } from '../../../base/common/codicons.js';
 import { Color } from '../../../base/common/color.js';
 import { Emitter } from '../../../base/common/event.js';
 import * as objects from '../../../base/common/objects.js';
+import './media/peekViewWidget.css';
+import { registerEditorContribution } from '../../browser/editorExtensions.js';
 import { ICodeEditorService } from '../../browser/services/codeEditorService.js';
 import { EmbeddedCodeEditorWidget } from '../../browser/widget/embeddedCodeEditorWidget.js';
 import { ZoneWidget } from '../zoneWidget/zoneWidget.js';
 import * as nls from '../../../nls.js';
-import { RawContextKey, IContextKeyService } from '../../../platform/contextkey/common/contextkey.js';
-import { createDecorator, IInstantiationService } from '../../../platform/instantiation/common/instantiation.js';
+import { createActionViewItem } from '../../../platform/actions/browser/menuEntryActionViewItem.js';
+import { IContextKeyService, RawContextKey } from '../../../platform/contextkey/common/contextkey.js';
 import { registerSingleton } from '../../../platform/instantiation/common/extensions.js';
-import { registerEditorContribution } from '../../browser/editorExtensions.js';
-import { registerColor, contrastBorder, activeContrastBorder } from '../../../platform/theme/common/colorRegistry.js';
-import { Codicon } from '../../../base/common/codicons.js';
-import { MenuItemAction, SubmenuItemAction } from '../../../platform/actions/common/actions.js';
-import { MenuEntryActionViewItem, SubmenuEntryActionViewItem } from '../../../platform/actions/browser/menuEntryActionViewItem.js';
+import { createDecorator, IInstantiationService } from '../../../platform/instantiation/common/instantiation.js';
+import { activeContrastBorder, contrastBorder, editorInfoForeground, registerColor, transparent } from '../../../platform/theme/common/colorRegistry.js';
 export const IPeekViewService = createDecorator('IPeekViewService');
 registerSingleton(IPeekViewService, class {
     constructor() {
@@ -53,7 +52,7 @@ registerSingleton(IPeekViewService, class {
 });
 export var PeekContext;
 (function (PeekContext) {
-    PeekContext.inPeekEditor = new RawContextKey('inReferenceSearchEditor', true);
+    PeekContext.inPeekEditor = new RawContextKey('inReferenceSearchEditor', true, nls.localize('inReferenceSearchEditor', "Whether the current code editor is embedded inside peek"));
     PeekContext.notInPeekEditor = PeekContext.inPeekEditor.toNegated();
 })(PeekContext || (PeekContext = {}));
 let PeekContextController = class PeekContextController {
@@ -90,8 +89,11 @@ let PeekViewWidget = class PeekViewWidget extends ZoneWidget {
         objects.mixin(this.options, defaultOptions, false);
     }
     dispose() {
-        super.dispose();
-        this._onDidClose.fire(this);
+        if (!this.disposed) {
+            this.disposed = true; // prevent consumers who dispose on onDidClose from looping
+            super.dispose();
+            this._onDidClose.fire(this);
+        }
     }
     style(styles) {
         let options = this.options;
@@ -133,8 +135,11 @@ let PeekViewWidget = class PeekViewWidget extends ZoneWidget {
     }
     _fillHead(container, noCloseAction) {
         const titleElement = dom.$('.peekview-title');
+        if (this.options.supportOnTitleClick) {
+            titleElement.classList.add('clickable');
+            dom.addStandardDisposableListener(titleElement, 'click', event => this._onTitleClick(event));
+        }
         dom.append(this._headElement, titleElement);
-        dom.addStandardDisposableListener(titleElement, 'click', event => this._onTitleClick(event));
         this._fillTitleIcon(titleElement);
         this._primaryHeading = dom.$('span.filename');
         this._secondaryHeading = dom.$('span.dirname');
@@ -156,24 +161,17 @@ let PeekViewWidget = class PeekViewWidget extends ZoneWidget {
     }
     _getActionBarOptions() {
         return {
-            actionViewItemProvider: action => {
-                if (action instanceof MenuItemAction) {
-                    return this.instantiationService.createInstance(MenuEntryActionViewItem, action);
-                }
-                else if (action instanceof SubmenuItemAction) {
-                    return this.instantiationService.createInstance(SubmenuEntryActionViewItem, action);
-                }
-                return undefined;
-            }
+            actionViewItemProvider: createActionViewItem.bind(undefined, this.instantiationService),
+            orientation: 0 /* HORIZONTAL */
         };
     }
     _onTitleClick(event) {
-        // implement me
+        // implement me if supportOnTitleClick option is set
     }
     setTitle(primaryHeading, secondaryHeading) {
         if (this._primaryHeading && this._secondaryHeading) {
             this._primaryHeading.innerText = primaryHeading;
-            this._primaryHeading.setAttribute('aria-label', primaryHeading);
+            this._primaryHeading.setAttribute('title', primaryHeading);
             if (secondaryHeading) {
                 this._secondaryHeading.innerText = secondaryHeading;
             }
@@ -199,7 +197,7 @@ let PeekViewWidget = class PeekViewWidget extends ZoneWidget {
             this.dispose();
             return;
         }
-        const headHeight = Math.ceil(this.editor.getOption(51 /* lineHeight */) * 1.2);
+        const headHeight = Math.ceil(this.editor.getOption(58 /* lineHeight */) * 1.2);
         const bodyHeight = Math.round(heightInPixel - (headHeight + 2 /* the border-top/bottom width*/));
         this._doLayoutHead(headHeight, widthInPixel);
         this._doLayoutBody(bodyHeight, widthInPixel);
@@ -220,10 +218,10 @@ PeekViewWidget = __decorate([
     __param(2, IInstantiationService)
 ], PeekViewWidget);
 export { PeekViewWidget };
-export const peekViewTitleBackground = registerColor('peekViewTitle.background', { dark: '#1E1E1E', light: '#FFFFFF', hc: '#0C141F' }, nls.localize('peekViewTitleBackground', 'Background color of the peek view title area.'));
-export const peekViewTitleForeground = registerColor('peekViewTitleLabel.foreground', { dark: '#FFFFFF', light: '#333333', hc: '#FFFFFF' }, nls.localize('peekViewTitleForeground', 'Color of the peek view title.'));
+export const peekViewTitleBackground = registerColor('peekViewTitle.background', { dark: transparent(editorInfoForeground, .1), light: transparent(editorInfoForeground, .1), hc: null }, nls.localize('peekViewTitleBackground', 'Background color of the peek view title area.'));
+export const peekViewTitleForeground = registerColor('peekViewTitleLabel.foreground', { dark: Color.white, light: Color.black, hc: Color.white }, nls.localize('peekViewTitleForeground', 'Color of the peek view title.'));
 export const peekViewTitleInfoForeground = registerColor('peekViewTitleDescription.foreground', { dark: '#ccccccb3', light: '#616161e6', hc: '#FFFFFF99' }, nls.localize('peekViewTitleInfoForeground', 'Color of the peek view title info.'));
-export const peekViewBorder = registerColor('peekView.border', { dark: '#007acc', light: '#007acc', hc: contrastBorder }, nls.localize('peekViewBorder', 'Color of the peek view borders and arrow.'));
+export const peekViewBorder = registerColor('peekView.border', { dark: editorInfoForeground, light: editorInfoForeground, hc: contrastBorder }, nls.localize('peekViewBorder', 'Color of the peek view borders and arrow.'));
 export const peekViewResultsBackground = registerColor('peekViewResult.background', { dark: '#252526', light: '#F3F3F3', hc: Color.black }, nls.localize('peekViewResultsBackground', 'Background color of the peek view result list.'));
 export const peekViewResultsMatchForeground = registerColor('peekViewResult.lineForeground', { dark: '#bbbbbb', light: '#646465', hc: Color.white }, nls.localize('peekViewResultsMatchForeground', 'Foreground color for line nodes in the peek view result list.'));
 export const peekViewResultsFileForeground = registerColor('peekViewResult.fileForeground', { dark: Color.white, light: '#1E1E1E', hc: Color.white }, nls.localize('peekViewResultsFileForeground', 'Foreground color for file nodes in the peek view result list.'));

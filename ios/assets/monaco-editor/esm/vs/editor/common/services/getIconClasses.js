@@ -28,9 +28,14 @@ export function getIconClasses(modelService, modeService, resource, fileKind) {
             // Name & Extension(s)
             if (name) {
                 classes.push(`${name}-name-file-icon`);
-                const dotSegments = name.split('.');
-                for (let i = 1; i < dotSegments.length; i++) {
-                    classes.push(`${dotSegments.slice(i).join('.')}-ext-file-icon`); // add each combination of all found extensions if more than one
+                // Avoid doing an explosive combination of extensions for very long filenames
+                // (most file systems do not allow files > 255 length) with lots of `.` characters
+                // https://github.com/microsoft/vscode/issues/116199
+                if (name.length <= 255) {
+                    const dotSegments = name.split('.');
+                    for (let i = 1; i < dotSegments.length; i++) {
+                        classes.push(`${dotSegments.slice(i).join('.')}-ext-file-icon`); // add each combination of all found extensions if more than one
+                    }
                 }
                 classes.push(`ext-file-icon`); // extra segment to increase file-ext score
             }
@@ -43,7 +48,7 @@ export function getIconClasses(modelService, modeService, resource, fileKind) {
     }
     return classes;
 }
-export function detectModeId(modelService, modeService, resource) {
+function detectModeId(modelService, modeService, resource) {
     if (!resource) {
         return null; // we need a resource at least
     }
@@ -70,6 +75,6 @@ export function detectModeId(modelService, modeService, resource) {
     // otherwise fallback to path based detection
     return modeService.getModeIdByFilepathOrFirstLine(resource);
 }
-export function cssEscape(val) {
-    return val.replace(/\s/g, '\\$&'); // make sure to not introduce CSS classes from files that contain whitespace
+export function cssEscape(str) {
+    return str.replace(/[\11\12\14\15\40]/g, '/'); // HTML class names can not contain certain whitespace characters, use / instead, which doesn't exist in file names.
 }

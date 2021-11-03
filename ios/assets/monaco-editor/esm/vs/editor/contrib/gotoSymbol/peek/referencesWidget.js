@@ -20,29 +20,29 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import './referencesWidget.css';
 import * as dom from '../../../../base/browser/dom.js';
+import { Sizing, SplitView } from '../../../../base/browser/ui/splitview/splitview.js';
 import { Color } from '../../../../base/common/color.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
-import { dispose, DisposableStore } from '../../../../base/common/lifecycle.js';
+import { DisposableStore, dispose } from '../../../../base/common/lifecycle.js';
 import { Schemas } from '../../../../base/common/network.js';
 import { basenameOrAuthority, dirname } from '../../../../base/common/resources.js';
+import './referencesWidget.css';
 import { EmbeddedCodeEditorWidget } from '../../../browser/widget/embeddedCodeEditorWidget.js';
 import { Range } from '../../../common/core/range.js';
 import { ModelDecorationOptions, TextModel } from '../../../common/model/textModel.js';
 import { ITextModelService } from '../../../common/services/resolverService.js';
-import { AccessibilityProvider, DataSource, Delegate, FileReferencesRenderer, OneReferenceRenderer, StringRepresentationProvider, IdentityProvider } from './referencesTree.js';
+import { AccessibilityProvider, DataSource, Delegate, FileReferencesRenderer, IdentityProvider, OneReferenceRenderer, StringRepresentationProvider } from './referencesTree.js';
+import * as peekView from '../../peekView/peekView.js';
 import * as nls from '../../../../nls.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
+import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
 import { ILabelService } from '../../../../platform/label/common/label.js';
 import { WorkbenchAsyncDataTree } from '../../../../platform/list/browser/listService.js';
 import { activeContrastBorder } from '../../../../platform/theme/common/colorRegistry.js';
 import { IThemeService, registerThemingParticipant } from '../../../../platform/theme/common/themeService.js';
-import * as peekView from '../../peekView/peekView.js';
-import { FileReferences, OneReference } from '../referencesModel.js';
-import { SplitView, Sizing } from '../../../../base/browser/ui/splitview/splitview.js';
 import { IUndoRedoService } from '../../../../platform/undoRedo/common/undoRedo.js';
-import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
+import { FileReferences, OneReference } from '../referencesModel.js';
 class DecorationsManager {
     constructor(_editor, _model) {
         this._editor = _editor;
@@ -142,6 +142,7 @@ class DecorationsManager {
     }
 }
 DecorationsManager.DecorationOptions = ModelDecorationOptions.register({
+    description: 'reference-decoration',
     stickiness: 1 /* NeverGrowsWhenTypingAtEdges */,
     className: 'reference-decoration'
 });
@@ -174,7 +175,7 @@ class ReferencesTree extends WorkbenchAsyncDataTree {
  */
 let ReferenceWidget = class ReferenceWidget extends peekView.PeekViewWidget {
     constructor(editor, _defaultTreeKeyboardSupport, layoutData, themeService, _textModelResolverService, _instantiationService, _peekViewService, _uriLabel, _undoRedoService, _keybindingService) {
-        super(editor, { showFrame: false, showArrow: true, isResizeable: true, isAccessible: true }, _instantiationService);
+        super(editor, { showFrame: false, showArrow: true, isResizeable: true, isAccessible: true, supportOnTitleClick: true }, _instantiationService);
         this._defaultTreeKeyboardSupport = _defaultTreeKeyboardSupport;
         this.layoutData = layoutData;
         this._textModelResolverService = _textModelResolverService;
@@ -187,7 +188,7 @@ let ReferenceWidget = class ReferenceWidget extends peekView.PeekViewWidget {
         this._callOnDispose = new DisposableStore();
         this._onDidSelectReference = new Emitter();
         this.onDidSelectReference = this._onDidSelectReference.event;
-        this._dim = { height: 0, width: 0 };
+        this._dim = new dom.Dimension(0, 0);
         this._applyTheme(themeService.getColorTheme());
         this._callOnDispose.add(themeService.onDidColorThemeChange(this._applyTheme.bind(this)));
         this._peekViewService.addExclusiveWidget(editor, this);
@@ -271,7 +272,7 @@ let ReferenceWidget = class ReferenceWidget extends peekView.PeekViewWidget {
             keyboardNavigationLabelProvider: this._instantiationService.createInstance(StringRepresentationProvider),
             identityProvider: new IdentityProvider(),
             openOnSingleClick: true,
-            openOnFocus: true,
+            selectionNavigation: true,
             overrideStyles: {
                 listBackground: peekView.peekViewResultsBackground
             }
@@ -344,7 +345,7 @@ let ReferenceWidget = class ReferenceWidget extends peekView.PeekViewWidget {
     }
     _doLayoutBody(heightInPixel, widthInPixel) {
         super._doLayoutBody(heightInPixel, widthInPixel);
-        this._dim = { height: heightInPixel, width: widthInPixel };
+        this._dim = new dom.Dimension(widthInPixel, heightInPixel);
         this.layoutData.heightInLines = this._viewZone ? this._viewZone.heightInLines : this.layoutData.heightInLines;
         this._splitView.layout(widthInPixel);
         this._splitView.resizeView(0, widthInPixel * this.layoutData.ratio);

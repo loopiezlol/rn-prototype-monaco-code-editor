@@ -28,7 +28,10 @@ import { ILogService } from '../../../platform/log/common/log.js';
 import { IUndoRedoService } from '../../../platform/undoRedo/common/undoRedo.js';
 import { StringSHA1 } from '../../../base/common/hash.js';
 import { isEditStackElement } from '../model/editStack.js';
+import { Schemas } from '../../../base/common/network.js';
 import { SemanticTokensProviderStyling, toMultilineTokens2 } from './semanticTokensProviderStyling.js';
+import { getDocumentSemanticTokens, isSemanticTokens, isSemanticTokensEdits } from './getSemanticTokens.js';
+import { equals } from '../../../base/common/objects.js';
 function MODEL_ID(resource) {
     return resource.toString();
 }
@@ -55,10 +58,6 @@ class ModelData {
         if (this._languageSelectionListener) {
             this._languageSelectionListener.dispose();
             this._languageSelectionListener = null;
-        }
-        if (this._languageSelection) {
-            this._languageSelection.dispose();
-            this._languageSelection = null;
         }
     }
     dispose() {
@@ -109,6 +108,7 @@ let ModelServiceImpl = class ModelServiceImpl extends Disposable {
         this._register(new SemanticColoringFeature(this, this._themeService, this._configurationService, this._semanticStyling));
     }
     static _readModelOptions(config, isForSimpleWidget) {
+        var _a;
         let tabSize = EDITOR_MODEL_DEFAULTS.tabSize;
         if (config.editor && typeof config.editor.tabSize !== 'undefined') {
             const parsedTabSize = parseInt(config.editor.tabSize, 10);
@@ -153,6 +153,12 @@ let ModelServiceImpl = class ModelServiceImpl extends Disposable {
         if (config.editor && typeof config.editor.largeFileOptimizations !== 'undefined') {
             largeFileOptimizations = (config.editor.largeFileOptimizations === 'false' ? false : Boolean(config.editor.largeFileOptimizations));
         }
+        let bracketPairColorizationOptions = EDITOR_MODEL_DEFAULTS.bracketPairColorizationOptions;
+        if (((_a = config.editor) === null || _a === void 0 ? void 0 : _a.bracketPairColorization) && typeof config.editor.bracketPairColorization === 'object') {
+            bracketPairColorizationOptions = {
+                enabled: !!config.editor.bracketPairColorization.enabled
+            };
+        }
         return {
             isForSimpleWidget: isForSimpleWidget,
             tabSize: tabSize,
@@ -161,7 +167,8 @@ let ModelServiceImpl = class ModelServiceImpl extends Disposable {
             detectIndentation: detectIndentation,
             defaultEOL: newDefaultEOL,
             trimAutoWhitespace: trimAutoWhitespace,
-            largeFileOptimizations: largeFileOptimizations
+            largeFileOptimizations: largeFileOptimizations,
+            bracketPairColorizationOptions
         };
     }
     _getEOL(resource, language) {
@@ -169,10 +176,17 @@ let ModelServiceImpl = class ModelServiceImpl extends Disposable {
             return this._resourcePropertiesService.getEOL(resource, language);
         }
         const eol = this._configurationService.getValue('files.eol', { overrideIdentifier: language });
-        if (eol && eol !== 'auto') {
+        if (eol && typeof eol === 'string' && eol !== 'auto') {
             return eol;
         }
         return platform.OS === 3 /* Linux */ || platform.OS === 2 /* Macintosh */ ? '\n' : '\r\n';
+    }
+    _shouldRestoreUndoStack() {
+        const result = this._configurationService.getValue('files.restoreUndoStack');
+        if (typeof result === 'boolean') {
+            return result;
+        }
+        return true;
     }
     getCreationOptions(language, resource, isForSimpleWidget) {
         let creationOptions = this._modelCreationOptionsByLanguageAndResource[language + resource];
@@ -208,14 +222,16 @@ let ModelServiceImpl = class ModelServiceImpl extends Disposable {
             && (currentOptions.insertSpaces === newOptions.insertSpaces)
             && (currentOptions.tabSize === newOptions.tabSize)
             && (currentOptions.indentSize === newOptions.indentSize)
-            && (currentOptions.trimAutoWhitespace === newOptions.trimAutoWhitespace)) {
+            && (currentOptions.trimAutoWhitespace === newOptions.trimAutoWhitespace)
+            && equals(currentOptions.bracketPairColorizationOptions, newOptions.bracketPairColorizationOptions)) {
             // Same indent opts, no need to touch the model
             return;
         }
         if (newOptions.detectIndentation) {
             model.detectIndentation(newOptions.insertSpaces, newOptions.tabSize);
             model.updateOptions({
-                trimAutoWhitespace: newOptions.trimAutoWhitespace
+                trimAutoWhitespace: newOptions.trimAutoWhitespace,
+                bracketColorizationOptions: newOptions.bracketPairColorizationOptions
             });
         }
         else {
@@ -223,9 +239,15 @@ let ModelServiceImpl = class ModelServiceImpl extends Disposable {
                 insertSpaces: newOptions.insertSpaces,
                 tabSize: newOptions.tabSize,
                 indentSize: newOptions.indentSize,
-                trimAutoWhitespace: newOptions.trimAutoWhitespace
+                trimAutoWhitespace: newOptions.trimAutoWhitespace,
+                bracketColorizationOptions: newOptions.bracketPairColorizationOptions
             });
         }
+    }
+    // --- begin IModelService
+    _insertDisposedModel(disposedModelData) {
+        this._disposedModels.set(MODEL_ID(disposedModelData.uri), disposedModelData);
+        this._disposedModelsHeapSize += disposedModelData.heapSize;
     }
     _removeDisposedModel(resource) {
         const disposedModelData = this._disposedModels.get(MODEL_ID(resource));
@@ -234,6 +256,25 @@ let ModelServiceImpl = class ModelServiceImpl extends Disposable {
         }
         this._disposedModels.delete(MODEL_ID(resource));
         return disposedModelData;
+    }
+    _ensureDisposedModelsHeapSize(maxModelsHeapSize) {
+        if (this._disposedModelsHeapSize > maxModelsHeapSize) {
+            // we must remove some old undo stack elements to free up some memory
+            const disposedModels = [];
+            this._disposedModels.forEach(entry => {
+                if (!entry.sharesUndoRedoStack) {
+                    disposedModels.push(entry);
+                }
+            });
+            disposedModels.sort((a, b) => a.time - b.time);
+            while (disposedModels.length > 0 && this._disposedModelsHeapSize > maxModelsHeapSize) {
+                const disposedModel = disposedModels.shift();
+                this._removeDisposedModel(disposedModel.uri);
+                if (disposedModel.initialUndoRedoSnapshot !== null) {
+                    this._undoRedoService.restoreSnapshot(disposedModel.initialUndoRedoSnapshot);
+                }
+            }
+        }
     }
     _createModelData(value, languageIdentifier, resource, isForSimpleWidget) {
         // create & save the model
@@ -319,9 +360,61 @@ let ModelServiceImpl = class ModelServiceImpl extends Disposable {
         return this._semanticStyling.get(provider);
     }
     // --- end IModelService
+    _schemaShouldMaintainUndoRedoElements(resource) {
+        return (resource.scheme === Schemas.file
+            || resource.scheme === Schemas.vscodeRemote
+            || resource.scheme === Schemas.userData
+            || resource.scheme === Schemas.vscodeNotebookCell
+            || resource.scheme === 'fake-fs' // for tests
+        );
+    }
     _onWillDispose(model) {
         const modelId = MODEL_ID(model.uri);
         const modelData = this._models[modelId];
+        const sharesUndoRedoStack = (this._undoRedoService.getUriComparisonKey(model.uri) !== model.uri.toString());
+        let maintainUndoRedoStack = false;
+        let heapSize = 0;
+        if (sharesUndoRedoStack || (this._shouldRestoreUndoStack() && this._schemaShouldMaintainUndoRedoElements(model.uri))) {
+            const elements = this._undoRedoService.getElements(model.uri);
+            if (elements.past.length > 0 || elements.future.length > 0) {
+                for (const element of elements.past) {
+                    if (isEditStackElement(element) && element.matchesResource(model.uri)) {
+                        maintainUndoRedoStack = true;
+                        heapSize += element.heapSize(model.uri);
+                        element.setModel(model.uri); // remove reference from text buffer instance
+                    }
+                }
+                for (const element of elements.future) {
+                    if (isEditStackElement(element) && element.matchesResource(model.uri)) {
+                        maintainUndoRedoStack = true;
+                        heapSize += element.heapSize(model.uri);
+                        element.setModel(model.uri); // remove reference from text buffer instance
+                    }
+                }
+            }
+        }
+        const maxMemory = ModelServiceImpl.MAX_MEMORY_FOR_CLOSED_FILES_UNDO_STACK;
+        if (!maintainUndoRedoStack) {
+            if (!sharesUndoRedoStack) {
+                const initialUndoRedoSnapshot = modelData.model.getInitialUndoRedoSnapshot();
+                if (initialUndoRedoSnapshot !== null) {
+                    this._undoRedoService.restoreSnapshot(initialUndoRedoSnapshot);
+                }
+            }
+        }
+        else if (!sharesUndoRedoStack && heapSize > maxMemory) {
+            // the undo stack for this file would never fit in the configured memory, so don't bother with it.
+            const initialUndoRedoSnapshot = modelData.model.getInitialUndoRedoSnapshot();
+            if (initialUndoRedoSnapshot !== null) {
+                this._undoRedoService.restoreSnapshot(initialUndoRedoSnapshot);
+            }
+        }
+        else {
+            this._ensureDisposedModelsHeapSize(maxMemory - heapSize);
+            // We only invalidate the elements, but they remain in the undo-redo service.
+            this._undoRedoService.setElementsValidFlag(model.uri, false, (element) => (isEditStackElement(element) && element.matchesResource(model.uri)));
+            this._insertDisposedModel(new DisposedModelInfo(model.uri, modelData.model.getInitialUndoRedoSnapshot(), Date.now(), sharesUndoRedoStack, heapSize, computeModelSha1(model), model.getVersionId(), model.getAlternativeVersionId()));
+        }
         delete this._models[modelId];
         modelData.dispose();
         // clean up cache
@@ -337,6 +430,7 @@ let ModelServiceImpl = class ModelServiceImpl extends Disposable {
         this._onModelModeChanged.fire({ model, oldModeId });
     }
 };
+ModelServiceImpl.MAX_MEMORY_FOR_CLOSED_FILES_UNDO_STACK = 20 * 1024 * 1024;
 ModelServiceImpl = __decorate([
     __param(0, IConfigurationService),
     __param(1, ITextResourcePropertiesService),
@@ -427,13 +521,13 @@ class SemanticTokensResponse {
         this._provider.releaseDocumentSemanticTokens(this.resultId);
     }
 }
-class ModelSemanticColoring extends Disposable {
+export class ModelSemanticColoring extends Disposable {
     constructor(model, themeService, stylingProvider) {
         super();
         this._isDisposed = false;
         this._model = model;
         this._semanticStyling = stylingProvider;
-        this._fetchDocumentSemanticTokens = this._register(new RunOnceScheduler(() => this._fetchDocumentSemanticTokensNow(), 300));
+        this._fetchDocumentSemanticTokens = this._register(new RunOnceScheduler(() => this._fetchDocumentSemanticTokensNow(), ModelSemanticColoring.FETCH_DOCUMENT_SEMANTIC_TOKENS_DELAY));
         this._currentDocumentResponse = null;
         this._currentDocumentRequestCancellationTokenSource = null;
         this._documentProvidersChangeListeners = [];
@@ -441,6 +535,19 @@ class ModelSemanticColoring extends Disposable {
             if (!this._fetchDocumentSemanticTokens.isScheduled()) {
                 this._fetchDocumentSemanticTokens.schedule();
             }
+        }));
+        this._register(this._model.onDidChangeLanguage(() => {
+            // clear any outstanding state
+            if (this._currentDocumentResponse) {
+                this._currentDocumentResponse.dispose();
+                this._currentDocumentResponse = null;
+            }
+            if (this._currentDocumentRequestCancellationTokenSource) {
+                this._currentDocumentRequestCancellationTokenSource.cancel();
+                this._currentDocumentRequestCancellationTokenSource = null;
+            }
+            this._setDocumentSemanticTokens(null, null, null, []);
+            this._fetchDocumentSemanticTokens.schedule(0);
         }));
         const bindDocumentChangeListeners = () => {
             dispose(this._documentProvidersChangeListeners);
@@ -481,24 +588,31 @@ class ModelSemanticColoring extends Disposable {
             // there is already a request running, let it finish...
             return;
         }
-        const provider = this._getSemanticColoringProvider();
-        if (!provider) {
+        const cancellationTokenSource = new CancellationTokenSource();
+        const lastResultId = this._currentDocumentResponse ? this._currentDocumentResponse.resultId || null : null;
+        const r = getDocumentSemanticTokens(this._model, lastResultId, cancellationTokenSource.token);
+        if (!r) {
+            // there is no provider
+            if (this._currentDocumentResponse) {
+                // there are semantic tokens set
+                this._model.setSemanticTokens(null, false);
+            }
             return;
         }
-        this._currentDocumentRequestCancellationTokenSource = new CancellationTokenSource();
+        const { provider, request } = r;
+        this._currentDocumentRequestCancellationTokenSource = cancellationTokenSource;
         const pendingChanges = [];
         const contentChangeListener = this._model.onDidChangeContent((e) => {
             pendingChanges.push(e);
         });
         const styling = this._semanticStyling.get(provider);
-        const lastResultId = this._currentDocumentResponse ? this._currentDocumentResponse.resultId || null : null;
-        const request = Promise.resolve(provider.provideDocumentSemanticTokens(this._model, lastResultId, this._currentDocumentRequestCancellationTokenSource.token));
         request.then((res) => {
             this._currentDocumentRequestCancellationTokenSource = null;
             contentChangeListener.dispose();
             this._setDocumentSemanticTokens(provider, res || null, styling, pendingChanges);
         }, (err) => {
-            if (!err || typeof err.message !== 'string' || err.message.indexOf('busy') === -1) {
+            const isExpectedError = err && (errors.isPromiseCanceledError(err) || (typeof err.message === 'string' && err.message.indexOf('busy') !== -1));
+            if (!isExpectedError) {
                 errors.onUnexpectedError(err);
             }
             // Semantic tokens eats up all errors and considers errors to mean that the result is temporarily not available
@@ -513,12 +627,6 @@ class ModelSemanticColoring extends Disposable {
             }
         });
     }
-    static _isSemanticTokens(v) {
-        return v && !!(v.data);
-    }
-    static _isSemanticTokensEdits(v) {
-        return v && Array.isArray(v.edits);
-    }
     static _copy(src, srcOffset, dest, destOffset, length) {
         for (let i = 0; i < length; i++) {
             dest[destOffset + i] = src[srcOffset + i];
@@ -526,6 +634,11 @@ class ModelSemanticColoring extends Disposable {
     }
     _setDocumentSemanticTokens(provider, tokens, styling, pendingChanges) {
         const currentResponse = this._currentDocumentResponse;
+        const rescheduleIfNeeded = () => {
+            if (pendingChanges.length > 0 && !this._fetchDocumentSemanticTokens.isScheduled()) {
+                this._fetchDocumentSemanticTokens.schedule();
+            }
+        };
         if (this._currentDocumentResponse) {
             this._currentDocumentResponse.dispose();
             this._currentDocumentResponse = null;
@@ -543,9 +656,10 @@ class ModelSemanticColoring extends Disposable {
         }
         if (!tokens) {
             this._model.setSemanticTokens(null, true);
+            rescheduleIfNeeded();
             return;
         }
-        if (ModelSemanticColoring._isSemanticTokensEdits(tokens)) {
+        if (isSemanticTokensEdits(tokens)) {
             if (!currentResponse) {
                 // not possible!
                 this._model.setSemanticTokens(null, true);
@@ -589,7 +703,7 @@ class ModelSemanticColoring extends Disposable {
                 };
             }
         }
-        if (ModelSemanticColoring._isSemanticTokens(tokens)) {
+        if (isSemanticTokens(tokens)) {
             this._currentDocumentResponse = new SemanticTokensResponse(provider, tokens.resultId, tokens.data);
             const result = toMultilineTokens2(tokens, styling, this._model.getLanguageIdentifier());
             // Adjust incoming semantic tokens
@@ -605,17 +719,13 @@ class ModelSemanticColoring extends Disposable {
                         }
                     }
                 }
-                if (!this._fetchDocumentSemanticTokens.isScheduled()) {
-                    this._fetchDocumentSemanticTokens.schedule();
-                }
             }
             this._model.setSemanticTokens(result, true);
-            return;
         }
-        this._model.setSemanticTokens(null, true);
-    }
-    _getSemanticColoringProvider() {
-        const result = DocumentSemanticTokensProviderRegistry.ordered(this._model);
-        return (result.length > 0 ? result[0] : null);
+        else {
+            this._model.setSemanticTokens(null, true);
+        }
+        rescheduleIfNeeded();
     }
 }
+ModelSemanticColoring.FETCH_DOCUMENT_SEMANTIC_TOKENS_DELAY = 300;

@@ -2,8 +2,8 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-import { isWindows } from './platform.js';
 import * as paths from './path.js';
+import { isWindows } from './platform.js';
 const _schemePattern = /^\w[\w\d+.-]*$/;
 const _singleSlashStart = /^\//;
 const _doubleSlashStart = /^\/\//;
@@ -120,7 +120,7 @@ export class URI {
             && typeof thing.path === 'string'
             && typeof thing.query === 'string'
             && typeof thing.scheme === 'string'
-            && typeof thing.fsPath === 'function'
+            && typeof thing.fsPath === 'string'
             && typeof thing.with === 'function'
             && typeof thing.toString === 'function';
     }
@@ -259,7 +259,9 @@ export class URI {
         return new Uri('file', authority, path, _empty, _empty);
     }
     static from(components) {
-        return new Uri(components.scheme, components.authority, components.path, components.query, components.fragment);
+        const result = new Uri(components.scheme, components.authority, components.path, components.query, components.fragment);
+        _validateUri(result, true);
+        return result;
     }
     /**
      * Join a URI path with path fragments and normalizes the resulting path.
@@ -270,7 +272,7 @@ export class URI {
      */
     static joinPath(uri, ...pathFragment) {
         if (!uri.path) {
-            throw new Error(`[UriError]: cannot call joinPaths on URI without path`);
+            throw new Error(`[UriError]: cannot call joinPath on URI without path`);
         }
         let newPath;
         if (isWindows && uri.scheme === 'file') {
@@ -315,7 +317,7 @@ export class URI {
     }
 }
 const _pathSepMarker = isWindows ? 1 : undefined;
-// This class exists so that URI is compatibile with vscode.Uri (API).
+// This class exists so that URI is compatible with vscode.Uri (API).
 class Uri extends URI {
     constructor() {
         super(...arguments);
@@ -342,7 +344,7 @@ class Uri extends URI {
     }
     toJSON() {
         const res = {
-            $mid: 1
+            $mid: 1 /* Uri */
         };
         // cached state
         if (this._fsPath) {

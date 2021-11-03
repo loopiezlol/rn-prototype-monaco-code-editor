@@ -11,7 +11,7 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __param = (this && this.__param) || function (paramIndex, decorator) {
     return function (target, key) { decorator(target, key, paramIndex); }
 };
-import { TimeoutTimer, createCancelablePromise } from '../../../base/common/async.js';
+import { createCancelablePromise, TimeoutTimer } from '../../../base/common/async.js';
 import { RGBA } from '../../../base/common/color.js';
 import { onUnexpectedError } from '../../../base/common/errors.js';
 import { hash } from '../../../base/common/hash.js';
@@ -35,13 +35,13 @@ let ColorDetector = class ColorDetector extends Disposable {
         this._colorDatas = new Map();
         this._colorDecoratorIds = [];
         this._decorationsTypes = new Set();
-        this._register(_editor.onDidChangeModel((e) => {
+        this._register(_editor.onDidChangeModel(() => {
             this._isEnabled = this.isEnabled();
             this.onModelChanged();
         }));
-        this._register(_editor.onDidChangeModelLanguage((e) => this.onModelChanged()));
-        this._register(ColorProviderRegistry.onDidChange((e) => this.onModelChanged()));
-        this._register(_editor.onDidChangeConfiguration((e) => {
+        this._register(_editor.onDidChangeModelLanguage(() => this.onModelChanged()));
+        this._register(ColorProviderRegistry.onDidChange(() => this.onModelChanged()));
+        this._register(_editor.onDidChangeConfiguration(() => {
             let prevIsEnabled = this._isEnabled;
             this._isEnabled = this.isEnabled();
             if (prevIsEnabled !== this._isEnabled) {
@@ -66,13 +66,13 @@ let ColorDetector = class ColorDetector extends Disposable {
         const languageId = model.getLanguageIdentifier();
         // handle deprecated settings. [languageId].colorDecorators.enable
         const deprecatedConfig = this._configurationService.getValue(languageId.language);
-        if (deprecatedConfig) {
+        if (deprecatedConfig && typeof deprecatedConfig === 'object') {
             const colorDecorators = deprecatedConfig['colorDecorators']; // deprecatedConfig.valueOf('.colorDecorators.enable');
             if (colorDecorators && colorDecorators['enable'] !== undefined && !colorDecorators['enable']) {
                 return colorDecorators['enable'];
             }
         }
-        return this._editor.getOption(12 /* colorDecorators */);
+        return this._editor.getOption(17 /* colorDecorators */);
     }
     static get(editor) {
         return editor.getContribution(this.ID);
@@ -91,7 +91,7 @@ let ColorDetector = class ColorDetector extends Disposable {
         if (!model || !ColorProviderRegistry.has(model)) {
             return;
         }
-        this._localToDispose.add(this._editor.onDidChangeModelContent((e) => {
+        this._localToDispose.add(this._editor.onDidChangeModelContent(() => {
             if (!this._timeoutTimer) {
                 this._timeoutTimer = new TimeoutTimer();
                 this._timeoutTimer.cancelAndSet(() => {
@@ -151,7 +151,7 @@ let ColorDetector = class ColorDetector extends Disposable {
             let color = `rgba(${rgba.r}, ${rgba.g}, ${rgba.b}, ${rgba.a})`;
             let key = 'colorBox-' + subKey;
             if (!this._decorationsTypes.has(key) && !newDecorationsTypes[key]) {
-                this._codeEditorService.registerDecorationType(key, {
+                this._codeEditorService.registerDecorationType('color-detector-color', key, {
                     before: {
                         contentText: ' ',
                         border: 'solid 0.1em #000',

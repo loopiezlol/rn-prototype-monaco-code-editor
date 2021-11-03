@@ -2,45 +2,43 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-import { equals } from './arrays.js';
-import { escapeCodicons } from './codicons.js';
 import { illegalArgument } from './errors.js';
+import { escapeIcons } from './iconLabels.js';
 export class MarkdownString {
-    constructor(_value = '', isTrustedOrOptions = false) {
-        var _a, _b;
-        this._value = _value;
-        if (typeof this._value !== 'string') {
+    constructor(value = '', isTrustedOrOptions = false) {
+        var _a, _b, _c;
+        this.value = value;
+        if (typeof this.value !== 'string') {
             throw illegalArgument('value');
         }
         if (typeof isTrustedOrOptions === 'boolean') {
-            this._isTrusted = isTrustedOrOptions;
-            this._supportThemeIcons = false;
+            this.isTrusted = isTrustedOrOptions;
+            this.supportThemeIcons = false;
+            this.supportHtml = false;
         }
         else {
-            this._isTrusted = (_a = isTrustedOrOptions.isTrusted) !== null && _a !== void 0 ? _a : false;
-            this._supportThemeIcons = (_b = isTrustedOrOptions.supportThemeIcons) !== null && _b !== void 0 ? _b : false;
+            this.isTrusted = (_a = isTrustedOrOptions.isTrusted) !== null && _a !== void 0 ? _a : undefined;
+            this.supportThemeIcons = (_b = isTrustedOrOptions.supportThemeIcons) !== null && _b !== void 0 ? _b : false;
+            this.supportHtml = (_c = isTrustedOrOptions.supportHtml) !== null && _c !== void 0 ? _c : false;
         }
     }
-    get value() { return this._value; }
-    get isTrusted() { return this._isTrusted; }
-    get supportThemeIcons() { return this._supportThemeIcons; }
-    appendText(value) {
-        // escape markdown syntax tokens: http://daringfireball.net/projects/markdown/syntax#backslash
-        this._value += (this._supportThemeIcons ? escapeCodicons(value) : value)
-            .replace(/[\\`*_{}[\]()#+\-.!]/g, '\\$&')
-            .replace(/\n/g, '\n\n');
+    appendText(value, newlineStyle = 0 /* Paragraph */) {
+        this.value += escapeMarkdownSyntaxTokens(this.supportThemeIcons ? escapeIcons(value) : value)
+            .replace(/([ \t]+)/g, (_match, g1) => '&nbsp;'.repeat(g1.length))
+            .replace(/\>/gm, '\\>')
+            .replace(/\n/g, newlineStyle === 1 /* Break */ ? '\\\n' : '\n\n');
         return this;
     }
     appendMarkdown(value) {
-        this._value += value;
+        this.value += value;
         return this;
     }
     appendCodeblock(langId, code) {
-        this._value += '\n```';
-        this._value += langId;
-        this._value += '\n';
-        this._value += code;
-        this._value += '\n```\n';
+        this.value += '\n```';
+        this.value += langId;
+        this.value += '\n';
+        this.value += code;
+        this.value += '\n```\n';
         return this;
     }
 }
@@ -66,33 +64,9 @@ export function isMarkdownString(thing) {
     }
     return false;
 }
-export function markedStringsEquals(a, b) {
-    if (!a && !b) {
-        return true;
-    }
-    else if (!a || !b) {
-        return false;
-    }
-    else if (Array.isArray(a) && Array.isArray(b)) {
-        return equals(a, b, markdownStringEqual);
-    }
-    else if (isMarkdownString(a) && isMarkdownString(b)) {
-        return markdownStringEqual(a, b);
-    }
-    else {
-        return false;
-    }
-}
-function markdownStringEqual(a, b) {
-    if (a === b) {
-        return true;
-    }
-    else if (!a || !b) {
-        return false;
-    }
-    else {
-        return a.value === b.value && a.isTrusted === b.isTrusted && a.supportThemeIcons === b.supportThemeIcons;
-    }
+export function escapeMarkdownSyntaxTokens(text) {
+    // escape markdown syntax tokens: http://daringfireball.net/projects/markdown/syntax#backslash
+    return text.replace(/[\\`*_{}[\]()#+\-.!]/g, '\\$&');
 }
 export function removeMarkdownEscapes(text) {
     if (!text) {

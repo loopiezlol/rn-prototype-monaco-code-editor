@@ -2,15 +2,15 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-import './dnd.css';
 import { Disposable } from '../../../base/common/lifecycle.js';
 import { isMacintosh } from '../../../base/common/platform.js';
+import './dnd.css';
 import { registerEditorContribution } from '../../browser/editorExtensions.js';
 import { Position } from '../../common/core/position.js';
 import { Range } from '../../common/core/range.js';
 import { Selection } from '../../common/core/selection.js';
-import { DragAndDropCommand } from './dragAndDropCommand.js';
 import { ModelDecorationOptions } from '../../common/model/textModel.js';
+import { DragAndDropCommand } from './dragAndDropCommand.js';
 function hasTriggerModifier(e) {
     if (isMacintosh) {
         return e.altKey;
@@ -27,6 +27,7 @@ export class DragAndDropController extends Disposable {
         this._register(this._editor.onMouseUp((e) => this._onEditorMouseUp(e)));
         this._register(this._editor.onMouseDrag((e) => this._onEditorMouseDrag(e)));
         this._register(this._editor.onMouseDrop((e) => this._onEditorMouseDrop(e)));
+        this._register(this._editor.onMouseDropCanceled(() => this._onEditorMouseDropCanceled()));
         this._register(this._editor.onKeyDown((e) => this.onEditorKeyDown(e)));
         this._register(this._editor.onKeyUp((e) => this.onEditorKeyUp(e)));
         this._register(this._editor.onDidBlurEditorWidget(() => this.onEditorBlur()));
@@ -43,7 +44,7 @@ export class DragAndDropController extends Disposable {
         this._modifierPressed = false;
     }
     onEditorKeyDown(e) {
-        if (!this._editor.getOption(25 /* dragAndDrop */) || this._editor.getOption(13 /* columnSelection */)) {
+        if (!this._editor.getOption(31 /* dragAndDrop */) || this._editor.getOption(18 /* columnSelection */)) {
             return;
         }
         if (hasTriggerModifier(e)) {
@@ -56,7 +57,7 @@ export class DragAndDropController extends Disposable {
         }
     }
     onEditorKeyUp(e) {
-        if (!this._editor.getOption(25 /* dragAndDrop */) || this._editor.getOption(13 /* columnSelection */)) {
+        if (!this._editor.getOption(31 /* dragAndDrop */) || this._editor.getOption(18 /* columnSelection */)) {
             return;
         }
         if (hasTriggerModifier(e)) {
@@ -109,6 +110,14 @@ export class DragAndDropController extends Disposable {
             }
         }
     }
+    _onEditorMouseDropCanceled() {
+        this._editor.updateOptions({
+            mouseStyle: 'text'
+        });
+        this._removeDecoration();
+        this._dragSelection = null;
+        this._mouseDown = false;
+    }
     _onEditorMouseDrop(mouseEvent) {
         if (mouseEvent.target && (this._hitContent(mouseEvent.target) || this._hitMargin(mouseEvent.target)) && mouseEvent.target.position) {
             let newCursorPosition = new Position(mouseEvent.target.position.lineNumber, mouseEvent.target.position.column);
@@ -131,8 +140,8 @@ export class DragAndDropController extends Disposable {
                         }
                     });
                 }
-                // Use `mouse` as the source instead of `api`.
-                this._editor.setSelections(newSelections || [], 'mouse');
+                // Use `mouse` as the source instead of `api` and setting the reason to explicit (to behave like any other mouse operation).
+                this._editor.setSelections(newSelections || [], 'mouse', 3 /* Explicit */);
             }
             else if (!this._dragSelection.containsPosition(newCursorPosition) ||
                 ((hasTriggerModifier(mouseEvent.event) ||
@@ -181,6 +190,7 @@ export class DragAndDropController extends Disposable {
 DragAndDropController.ID = 'editor.contrib.dragAndDrop';
 DragAndDropController.TRIGGER_KEY_VALUE = isMacintosh ? 6 /* Alt */ : 5 /* Ctrl */;
 DragAndDropController._DECORATION_OPTIONS = ModelDecorationOptions.register({
+    description: 'dnd-target',
     className: 'dnd-target'
 });
 registerEditorContribution(DragAndDropController.ID, DragAndDropController);

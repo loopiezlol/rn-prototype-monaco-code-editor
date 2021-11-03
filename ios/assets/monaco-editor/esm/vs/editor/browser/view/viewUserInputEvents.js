@@ -14,6 +14,7 @@ export class ViewUserInputEvents {
         this.onMouseUp = null;
         this.onMouseDrag = null;
         this.onMouseDrop = null;
+        this.onMouseDropCanceled = null;
         this.onMouseWheel = null;
         this._coordinatesConverter = coordinatesConverter;
     }
@@ -60,6 +61,11 @@ export class ViewUserInputEvents {
     emitMouseDrop(e) {
         if (this.onMouseDrop) {
             this.onMouseDrop(this._convertViewToModelMouseEvent(e));
+        }
+    }
+    emitMouseDropCanceled() {
+        if (this.onMouseDropCanceled) {
+            this.onMouseDropCanceled();
         }
     }
     emitMouseWheel(e) {

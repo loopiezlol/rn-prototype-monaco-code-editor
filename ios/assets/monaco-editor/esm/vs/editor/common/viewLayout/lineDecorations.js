@@ -9,6 +9,7 @@ export class LineDecoration {
         this.endColumn = endColumn;
         this.className = className;
         this.type = type;
+        this._lineDecorationBrand = undefined;
     }
     static _equals(a, b) {
         return (a.startColumn === b.startColumn
@@ -28,6 +29,23 @@ export class LineDecoration {
             }
         }
         return true;
+    }
+    static extractWrapped(arr, startOffset, endOffset) {
+        if (arr.length === 0) {
+            return arr;
+        }
+        const startColumn = startOffset + 1;
+        const endColumn = endOffset + 1;
+        const lineLength = endOffset - startOffset;
+        const r = [];
+        let rLength = 0;
+        for (const dec of arr) {
+            if (dec.endColumn <= startColumn || dec.startColumn >= endColumn) {
+                continue;
+            }
+            r[rLength++] = new LineDecoration(Math.max(1, dec.startColumn - startColumn + 1), Math.min(lineLength + 1, dec.endColumn - startColumn + 1), dec.className, dec.type);
+        }
+        return r;
     }
     static filter(lineDecorations, lineNumber, minLineColumn, maxLineColumn) {
         if (lineDecorations.length === 0) {
@@ -56,23 +74,20 @@ export class LineDecoration {
         return ORDER[a] - ORDER[b];
     }
     static compare(a, b) {
-        if (a.startColumn === b.startColumn) {
-            if (a.endColumn === b.endColumn) {
-                const typeCmp = LineDecoration._typeCompare(a.type, b.type);
-                if (typeCmp === 0) {
-                    if (a.className < b.className) {
-                        return -1;
-                    }
-                    if (a.className > b.className) {
-                        return 1;
-                    }
-                    return 0;
-                }
-                return typeCmp;
-            }
+        if (a.startColumn !== b.startColumn) {
+            return a.startColumn - b.startColumn;
+        }
+        if (a.endColumn !== b.endColumn) {
             return a.endColumn - b.endColumn;
         }
-        return a.startColumn - b.startColumn;
+        const typeCmp = LineDecoration._typeCompare(a.type, b.type);
+        if (typeCmp !== 0) {
+            return typeCmp;
+        }
+        if (a.className !== b.className) {
+            return a.className < b.className ? -1 : 1;
+        }
+        return 0;
     }
 }
 export class DecorationSegment {

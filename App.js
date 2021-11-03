@@ -8,9 +8,10 @@ import {
   Button,
   Alert,
   SafeAreaView,
+  Platform,
 } from "react-native";
 import { WebView } from "react-native-webview";
-
+import { KeyboardAvoidingView } from "react-native";
 // const myHtmlFile = require("./ios/assets/editor2.html");
 
 // export const InjectedMessageHandler = `
@@ -52,20 +53,28 @@ export default function App() {
   };
 
   return (
-      <SafeAreaView style={[styles.container]}>
+    <SafeAreaView style={[styles.container]}>
+      <KeyboardAvoidingView
+        contentContainerStyle={{ flex: 1 }}
+        enabled
+        behavior={Platform.select({ ios: "padding", android: null })}
+        style={{ flexGrow: 1 }}
+      >
         <WebView
-          style={{margin: 0, padding: 0, flex: 1}}
+          style={{ margin: 0, padding: 0, flex: 1 }}
+          useWebKit={true}
           originWhitelist={["*", "file://"]}
           ref={(r) => {
             this.webviewBridge = r;
           }}
           source={{
-            uri: "./assets/editor-local.html",
-            baseUrl: "./assets/monaco-editor",
+            uri: "./assets/editor-cm/index.html",
+            baseUrl: "./assets/editor-cm/",
           }}
           onLoad={() => setIsLoading(false)}
-          scrollEnabled={false}
+          scrollEnabled={true}
           hideKeyboardAccessoryView={true}
+          allowsLinkPreview={true}
           onMessage={(event) => {
             console.log(JSON.parse(event.nativeEvent.data).value);
             Alert.alert(
@@ -74,7 +83,8 @@ export default function App() {
             );
           }}
         />
-      </SafeAreaView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 

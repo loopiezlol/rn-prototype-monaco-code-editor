@@ -2,51 +2,53 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-import './dropdown.css';
-import { append, $, addClasses } from '../../dom.js';
-import { Emitter } from '../../../common/event.js';
+import { $, append } from '../../dom.js';
 import { BaseActionViewItem } from '../actionbar/actionViewItems.js';
 import { DropdownMenu } from './dropdown.js';
-import { asArray } from '../../../common/arrays.js';
+import { Emitter } from '../../../common/event.js';
+import './dropdown.css';
 export class DropdownMenuActionViewItem extends BaseActionViewItem {
-    constructor(action, menuActionsOrProvider, contextMenuProvider, options = {}) {
+    constructor(action, menuActionsOrProvider, contextMenuProvider, options = Object.create(null)) {
         super(null, action, options);
-        this.options = options;
+        this.actionItem = null;
         this._onDidChangeVisibility = this._register(new Emitter());
         this.menuActionsOrProvider = menuActionsOrProvider;
         this.contextMenuProvider = contextMenuProvider;
+        this.options = options;
         if (this.options.actionRunner) {
             this.actionRunner = this.options.actionRunner;
         }
     }
     render(container) {
+        this.actionItem = container;
         const labelRenderer = (el) => {
             this.element = append(el, $('a.action-label'));
-            const classNames = this.options.classNames ? asArray(this.options.classNames) : [];
+            let classNames = [];
+            if (typeof this.options.classNames === 'string') {
+                classNames = this.options.classNames.split(/\s+/g).filter(s => !!s);
+            }
+            else if (this.options.classNames) {
+                classNames = this.options.classNames;
+            }
             // todo@aeschli: remove codicon, should come through `this.options.classNames`
             if (!classNames.find(c => c === 'icon')) {
                 classNames.push('codicon');
             }
-            addClasses(this.element, ...classNames);
-            this.element.tabIndex = 0;
+            this.element.classList.add(...classNames);
             this.element.setAttribute('role', 'button');
             this.element.setAttribute('aria-haspopup', 'true');
             this.element.setAttribute('aria-expanded', 'false');
             this.element.title = this._action.label || '';
             return null;
         };
+        const isActionsArray = Array.isArray(this.menuActionsOrProvider);
         const options = {
             contextMenuProvider: this.contextMenuProvider,
             labelRenderer: labelRenderer,
-            menuAsChild: this.options.menuAsChild
+            menuAsChild: this.options.menuAsChild,
+            actions: isActionsArray ? this.menuActionsOrProvider : undefined,
+            actionProvider: isActionsArray ? undefined : this.menuActionsOrProvider
         };
-        // Render the DropdownMenu around a simple action to toggle it
-        if (Array.isArray(this.menuActionsOrProvider)) {
-            options.actions = this.menuActionsOrProvider;
-        }
-        else {
-            options.actionProvider = this.menuActionsOrProvider;
-        }
         this.dropdownMenu = this._register(new DropdownMenu(container, options));
         this._register(this.dropdownMenu.onDidChangeVisibility(visible => {
             var _a;
@@ -65,6 +67,7 @@ export class DropdownMenuActionViewItem extends BaseActionViewItem {
                     return that.options.anchorAlignmentProvider();
                 } });
         }
+        this.updateEnabled();
     }
     setActionContext(newContext) {
         super.setActionContext(newContext);
@@ -76,5 +79,11 @@ export class DropdownMenuActionViewItem extends BaseActionViewItem {
                 this.dropdownMenu.menuOptions = { context: newContext };
             }
         }
+    }
+    updateEnabled() {
+        var _a, _b;
+        const disabled = !this.getAction().enabled;
+        (_a = this.actionItem) === null || _a === void 0 ? void 0 : _a.classList.toggle('disabled', disabled);
+        (_b = this.element) === null || _b === void 0 ? void 0 : _b.classList.toggle('disabled', disabled);
     }
 }

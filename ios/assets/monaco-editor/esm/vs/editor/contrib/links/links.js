@@ -20,27 +20,26 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import './links.css';
-import * as nls from '../../../nls.js';
 import * as async from '../../../base/common/async.js';
 import { CancellationToken } from '../../../base/common/cancellation.js';
 import { onUnexpectedError } from '../../../base/common/errors.js';
 import { MarkdownString } from '../../../base/common/htmlContent.js';
 import { DisposableStore } from '../../../base/common/lifecycle.js';
+import { Schemas } from '../../../base/common/network.js';
 import * as platform from '../../../base/common/platform.js';
+import * as resources from '../../../base/common/resources.js';
+import { URI } from '../../../base/common/uri.js';
+import './links.css';
 import { EditorAction, registerEditorAction, registerEditorContribution } from '../../browser/editorExtensions.js';
 import { ModelDecorationOptions } from '../../common/model/textModel.js';
 import { LinkProviderRegistry } from '../../common/modes.js';
 import { ClickLinkGesture } from '../gotoSymbol/link/clickLinkGesture.js';
 import { getLinks } from './getLinks.js';
+import * as nls from '../../../nls.js';
 import { INotificationService } from '../../../platform/notification/common/notification.js';
 import { IOpenerService } from '../../../platform/opener/common/opener.js';
 import { editorActiveLinkForeground } from '../../../platform/theme/common/colorRegistry.js';
 import { registerThemingParticipant } from '../../../platform/theme/common/themeService.js';
-import { URI } from '../../../base/common/uri.js';
-import { Schemas } from '../../../base/common/network.js';
-import * as resources from '../../../base/common/resources.js';
-import * as strings from '../../../base/common/strings.js';
 function getHoverMessage(link, useMetaKey) {
     const executeCmd = link.url && /^command:/i.test(link.url.toString());
     const label = link.tooltip
@@ -56,7 +55,17 @@ function getHoverMessage(link, useMetaKey) {
             ? nls.localize('links.navigate.kb.alt.mac', "option + click")
             : nls.localize('links.navigate.kb.alt', "alt + click");
     if (link.url) {
-        const hoverMessage = new MarkdownString('', true).appendMarkdown(`[${label}](${link.url.toString()}) (${kb})`);
+        let nativeLabel = '';
+        if (/^command:/i.test(link.url.toString())) {
+            // Don't show complete command arguments in the native tooltip
+            const match = link.url.toString().match(/^command:([^?#]+)/);
+            if (match) {
+                const commandId = match[1];
+                const nativeLabelText = nls.localize('tooltip.explanation', "Execute command {0}", commandId);
+                nativeLabel = ` "${nativeLabelText}"`;
+            }
+        }
+        const hoverMessage = new MarkdownString('', true).appendMarkdown(`[${label}](${link.url.toString(true).replace(/ /g, '%20')}${nativeLabel}) (${kb})`);
         return hoverMessage;
     }
     else {
@@ -65,11 +74,13 @@ function getHoverMessage(link, useMetaKey) {
 }
 const decoration = {
     general: ModelDecorationOptions.register({
+        description: 'detected-link',
         stickiness: 1 /* NeverGrowsWhenTypingAtEdges */,
         collapseOnReplaceEdit: true,
         inlineClassName: 'detected-link'
     }),
     active: ModelDecorationOptions.register({
+        description: 'detected-link-active',
         stickiness: 1 /* NeverGrowsWhenTypingAtEdges */,
         collapseOnReplaceEdit: true,
         inlineClassName: 'detected-link-active'
@@ -115,9 +126,9 @@ let LinkDetector = class LinkDetector {
         this.listenersToRemove.add(clickLinkGesture.onCancel((e) => {
             this.cleanUpActiveLinkDecoration();
         }));
-        this.enabled = editor.getOption(54 /* links */);
+        this.enabled = editor.getOption(62 /* links */);
         this.listenersToRemove.add(editor.onDidChangeConfiguration((e) => {
-            const enabled = editor.getOption(54 /* links */);
+            const enabled = editor.getOption(62 /* links */);
             if (this.enabled === enabled) {
                 // No change in our configuration option
                 return;
@@ -184,7 +195,7 @@ let LinkDetector = class LinkDetector {
         });
     }
     updateDecorations(links) {
-        const useMetaKey = (this.editor.getOption(61 /* multiCursorModifier */) === 'altKey');
+        const useMetaKey = (this.editor.getOption(69 /* multiCursorModifier */) === 'altKey');
         let oldDecorations = [];
         let keys = Object.keys(this.currentOccurrences);
         for (let i = 0, len = keys.length; i < len; i++) {
@@ -208,7 +219,7 @@ let LinkDetector = class LinkDetector {
         }
     }
     _onEditorMouseMove(mouseEvent, withKey) {
-        const useMetaKey = (this.editor.getOption(61 /* multiCursorModifier */) === 'altKey');
+        const useMetaKey = (this.editor.getOption(69 /* multiCursorModifier */) === 'altKey');
         if (this.isEnabled(mouseEvent, withKey)) {
             this.cleanUpActiveLinkDecoration(); // always remove previous link decoration as their can only be one
             const occurrence = this.getLinkOccurrence(mouseEvent.target.position);
@@ -224,7 +235,7 @@ let LinkDetector = class LinkDetector {
         }
     }
     cleanUpActiveLinkDecoration() {
-        const useMetaKey = (this.editor.getOption(61 /* multiCursorModifier */) === 'altKey');
+        const useMetaKey = (this.editor.getOption(69 /* multiCursorModifier */) === 'altKey');
         if (this.activeLinkDecorationId) {
             const occurrence = this.currentOccurrences[this.activeLinkDecorationId];
             if (occurrence) {
@@ -254,15 +265,15 @@ let LinkDetector = class LinkDetector {
             // Support for relative file URIs of the shape file://./relativeFile.txt or file:///./relativeFile.txt
             if (typeof uri === 'string' && this.editor.hasModel()) {
                 const modelUri = this.editor.getModel().uri;
-                if (modelUri.scheme === Schemas.file && strings.startsWith(uri, 'file:')) {
+                if (modelUri.scheme === Schemas.file && uri.startsWith(`${Schemas.file}:`)) {
                     const parsedUri = URI.parse(uri);
                     if (parsedUri.scheme === Schemas.file) {
                         const fsPath = resources.originalFSPath(parsedUri);
                         let relativePath = null;
-                        if (strings.startsWith(fsPath, '/./')) {
+                        if (fsPath.startsWith('/./')) {
                             relativePath = `.${fsPath.substr(1)}`;
                         }
-                        else if (strings.startsWith(fsPath, '//./')) {
+                        else if (fsPath.startsWith('//./')) {
                             relativePath = `.${fsPath.substr(2)}`;
                         }
                         if (relativePath) {
@@ -271,7 +282,7 @@ let LinkDetector = class LinkDetector {
                     }
                 }
             }
-            return this.openerService.open(uri, { openToSide, fromUserGesture });
+            return this.openerService.open(uri, { openToSide, fromUserGesture, allowContributedOpeners: true, allowCommands: true });
         }, err => {
             const messageOrError = err instanceof Error ? err.message : err;
             // different error cases
@@ -309,9 +320,11 @@ let LinkDetector = class LinkDetector {
             && (mouseEvent.hasTriggerModifier || (withKey && withKey.keyCodeIsTriggerKey)));
     }
     stop() {
+        var _a;
         this.timeout.cancel();
         if (this.activeLinksList) {
-            this.activeLinksList.dispose();
+            (_a = this.activeLinksList) === null || _a === void 0 ? void 0 : _a.dispose();
+            this.activeLinksList = null;
         }
         if (this.computePromise) {
             this.computePromise.cancel();

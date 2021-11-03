@@ -1,3 +1,8 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+import { once } from './functional.js';
 import { Iterable } from './iterator.js';
 /**
  * Enables logging of potentially leaked disposables.
@@ -7,35 +12,72 @@ import { Iterable } from './iterator.js';
  * extend Disposable or use a DisposableStore. This means there are a lot of false positives.
  */
 const TRACK_DISPOSABLES = false;
-const __is_disposable_tracked__ = '__is_disposable_tracked__';
-function markTracked(x) {
-    if (!TRACK_DISPOSABLES) {
-        return;
-    }
-    if (x && x !== Disposable.None) {
-        try {
-            x[__is_disposable_tracked__] = true;
+let disposableTracker = null;
+export function setDisposableTracker(tracker) {
+    disposableTracker = tracker;
+}
+if (TRACK_DISPOSABLES) {
+    const __is_disposable_tracked__ = '__is_disposable_tracked__';
+    setDisposableTracker(new class {
+        trackDisposable(x) {
+            const stack = new Error('Potentially leaked disposable').stack;
+            setTimeout(() => {
+                if (!x[__is_disposable_tracked__]) {
+                    console.log(stack);
+                }
+            }, 3000);
         }
-        catch (_a) {
-            // noop
+        setParent(child, parent) {
+            if (child && child !== Disposable.None) {
+                try {
+                    child[__is_disposable_tracked__] = true;
+                }
+                catch (_a) {
+                    // noop
+                }
+            }
         }
-    }
+        markAsDisposed(disposable) {
+            if (disposable && disposable !== Disposable.None) {
+                try {
+                    disposable[__is_disposable_tracked__] = true;
+                }
+                catch (_a) {
+                    // noop
+                }
+            }
+        }
+        markAsSingleton(disposable) { }
+    });
 }
 function trackDisposable(x) {
-    if (!TRACK_DISPOSABLES) {
-        return x;
-    }
-    const stack = new Error('Potentially leaked disposable').stack;
-    setTimeout(() => {
-        if (!x[__is_disposable_tracked__]) {
-            console.log(stack);
-        }
-    }, 3000);
+    disposableTracker === null || disposableTracker === void 0 ? void 0 : disposableTracker.trackDisposable(x);
     return x;
+}
+function markAsDisposed(disposable) {
+    disposableTracker === null || disposableTracker === void 0 ? void 0 : disposableTracker.markAsDisposed(disposable);
+}
+function setParentOfDisposable(child, parent) {
+    disposableTracker === null || disposableTracker === void 0 ? void 0 : disposableTracker.setParent(child, parent);
+}
+function setParentOfDisposables(children, parent) {
+    if (!disposableTracker) {
+        return;
+    }
+    for (const child of children) {
+        disposableTracker.setParent(child, parent);
+    }
+}
+/**
+ * Indicates that the given object is a singleton which does not need to be disposed.
+*/
+export function markAsSingleton(singleton) {
+    disposableTracker === null || disposableTracker === void 0 ? void 0 : disposableTracker.markAsSingleton(singleton);
+    return singleton;
 }
 export class MultiDisposeError extends Error {
     constructor(errors) {
-        super(`Encounter errors while disposing of store. Errors: [${errors.join(', ')}]`);
+        super(`Encountered errors while disposing of store. Errors: [${errors.join(', ')}]`);
         this.errors = errors;
     }
 }
@@ -47,7 +89,6 @@ export function dispose(arg) {
         let errors = [];
         for (const d of arg) {
             if (d) {
-                markTracked(d);
                 try {
                     d.dispose();
                 }
@@ -65,21 +106,21 @@ export function dispose(arg) {
         return Array.isArray(arg) ? [] : arg;
     }
     else if (arg) {
-        markTracked(arg);
         arg.dispose();
         return arg;
     }
 }
 export function combinedDisposable(...disposables) {
-    disposables.forEach(markTracked);
-    return trackDisposable({ dispose: () => dispose(disposables) });
+    const parent = toDisposable(() => dispose(disposables));
+    setParentOfDisposables(disposables, parent);
+    return parent;
 }
 export function toDisposable(fn) {
     const self = trackDisposable({
-        dispose: () => {
-            markTracked(self);
+        dispose: once(() => {
+            markAsDisposed(self);
             fn();
-        }
+        })
     });
     return self;
 }
@@ -87,6 +128,7 @@ export class DisposableStore {
     constructor() {
         this._toDispose = new Set();
         this._isDisposed = false;
+        trackDisposable(this);
     }
     /**
      * Dispose of all registered disposables and mark this object as disposed.
@@ -97,7 +139,7 @@ export class DisposableStore {
         if (this._isDisposed) {
             return;
         }
-        markTracked(this);
+        markAsDisposed(this);
         this._isDisposed = true;
         this.clear();
     }
@@ -112,23 +154,23 @@ export class DisposableStore {
             this._toDispose.clear();
         }
     }
-    add(t) {
-        if (!t) {
-            return t;
+    add(o) {
+        if (!o) {
+            return o;
         }
-        if (t === this) {
+        if (o === this) {
             throw new Error('Cannot register a disposable on itself!');
         }
-        markTracked(t);
+        setParentOfDisposable(o, this);
         if (this._isDisposed) {
             if (!DisposableStore.DISABLE_DISPOSED_WARNING) {
                 console.warn(new Error('Trying to add a disposable to a DisposableStore that has already been disposed of. The added object will be leaked!').stack);
             }
         }
         else {
-            this._toDispose.add(t);
+            this._toDispose.add(o);
         }
-        return t;
+        return o;
     }
 }
 DisposableStore.DISABLE_DISPOSED_WARNING = false;
@@ -136,16 +178,17 @@ export class Disposable {
     constructor() {
         this._store = new DisposableStore();
         trackDisposable(this);
+        setParentOfDisposable(this._store, this);
     }
     dispose() {
-        markTracked(this);
+        markAsDisposed(this);
         this._store.dispose();
     }
-    _register(t) {
-        if (t === this) {
+    _register(o) {
+        if (o === this) {
             throw new Error('Cannot register a disposable on itself!');
         }
-        return this._store.add(t);
+        return this._store.add(o);
     }
 }
 Disposable.None = Object.freeze({ dispose() { } });
@@ -164,14 +207,13 @@ export class MutableDisposable {
         return this._isDisposed ? undefined : this._value;
     }
     set value(value) {
+        var _a;
         if (this._isDisposed || value === this._value) {
             return;
         }
-        if (this._value) {
-            this._value.dispose();
-        }
+        (_a = this._value) === null || _a === void 0 ? void 0 : _a.dispose();
         if (value) {
-            markTracked(value);
+            setParentOfDisposable(value, this);
         }
         this._value = value;
     }
@@ -179,12 +221,23 @@ export class MutableDisposable {
         this.value = undefined;
     }
     dispose() {
+        var _a;
         this._isDisposed = true;
-        markTracked(this);
-        if (this._value) {
-            this._value.dispose();
-        }
+        markAsDisposed(this);
+        (_a = this._value) === null || _a === void 0 ? void 0 : _a.dispose();
         this._value = undefined;
+    }
+    /**
+     * Clears the value, but does not dispose it.
+     * The old value is returned.
+    */
+    clearAndLeak() {
+        const oldValue = this._value;
+        this._value = undefined;
+        if (oldValue) {
+            setParentOfDisposable(oldValue, null);
+        }
+        return oldValue;
     }
 }
 export class ImmortalReference {

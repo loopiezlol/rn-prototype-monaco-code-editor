@@ -7,6 +7,7 @@ import { Emitter } from '../../../base/common/event.js';
 import { LanguageIdentifier } from '../modes.js';
 import { LanguageConfigurationRegistry } from './languageConfigurationRegistry.js';
 import { Registry } from '../../../platform/registry/common/platform.js';
+import { Mimes } from '../../../base/common/mime.js';
 // Define extension point ids
 export const Extensions = {
     ModesRegistry: 'editor.modesRegistry'
@@ -40,12 +41,13 @@ export class EditorModesRegistry {
 export const ModesRegistry = new EditorModesRegistry();
 Registry.add(Extensions.ModesRegistry, ModesRegistry);
 export const PLAINTEXT_MODE_ID = 'plaintext';
+export const PLAINTEXT_EXTENSION = '.txt';
 export const PLAINTEXT_LANGUAGE_IDENTIFIER = new LanguageIdentifier(PLAINTEXT_MODE_ID, 1 /* PlainText */);
 ModesRegistry.registerLanguage({
     id: PLAINTEXT_MODE_ID,
-    extensions: ['.txt'],
+    extensions: [PLAINTEXT_EXTENSION],
     aliases: [nls.localize('plainText.alias', "Plain Text"), 'text'],
-    mimetypes: ['text/plain']
+    mimetypes: [Mimes.text]
 });
 LanguageConfigurationRegistry.register(PLAINTEXT_LANGUAGE_IDENTIFIER, {
     brackets: [
@@ -62,7 +64,8 @@ LanguageConfigurationRegistry.register(PLAINTEXT_LANGUAGE_IDENTIFIER, {
         { open: '\'', close: '\'' },
         { open: '`', close: '`' },
     ],
+    colorizedBracketPairs: [],
     folding: {
         offSide: true
     }
-});
+}, 0);

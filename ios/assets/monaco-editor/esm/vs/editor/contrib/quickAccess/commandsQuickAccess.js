@@ -2,11 +2,11 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
+import { stripIcons } from '../../../base/common/iconLabels.js';
 import { AbstractCommandsQuickAccessProvider } from '../../../platform/quickinput/browser/commandsQuickAccess.js';
-import { stripCodicons } from '../../../base/common/codicons.js';
 export class AbstractEditorCommandsQuickAccessProvider extends AbstractCommandsQuickAccessProvider {
-    constructor(options, instantiationService, keybindingService, commandService, telemetryService, notificationService) {
-        super(options, instantiationService, keybindingService, commandService, telemetryService, notificationService);
+    constructor(options, instantiationService, keybindingService, commandService, telemetryService, dialogService) {
+        super(options, instantiationService, keybindingService, commandService, telemetryService, dialogService);
     }
     getCodeEditorCommandPicks() {
         const activeTextEditorControl = this.activeTextEditorControl;
@@ -18,7 +18,7 @@ export class AbstractEditorCommandsQuickAccessProvider extends AbstractCommandsQ
             editorCommandPicks.push({
                 commandId: editorAction.id,
                 commandAlias: editorAction.alias,
-                label: stripCodicons(editorAction.label) || editorAction.id,
+                label: stripIcons(editorAction.label) || editorAction.id,
             });
         }
         return editorCommandPicks;

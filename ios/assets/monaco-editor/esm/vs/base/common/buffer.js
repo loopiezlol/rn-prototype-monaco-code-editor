@@ -1,28 +1,27 @@
-/*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the MIT License. See License.txt in the project root for license information.
- *--------------------------------------------------------------------------------------------*/
-import * as strings from './strings.js';
 const hasBuffer = (typeof Buffer !== 'undefined');
-const hasTextDecoder = (typeof TextDecoder !== 'undefined');
 let textDecoder;
 export class VSBuffer {
     constructor(buffer) {
         this.buffer = buffer;
         this.byteLength = this.buffer.byteLength;
     }
+    static wrap(actual) {
+        if (hasBuffer && !(Buffer.isBuffer(actual))) {
+            // https://nodejs.org/dist/latest-v10.x/docs/api/buffer.html#buffer_class_method_buffer_from_arraybuffer_byteoffset_length
+            // Create a zero-copy Buffer wrapper around the ArrayBuffer pointed to by the Uint8Array
+            actual = Buffer.from(actual.buffer, actual.byteOffset, actual.byteLength);
+        }
+        return new VSBuffer(actual);
+    }
     toString() {
         if (hasBuffer) {
             return this.buffer.toString();
         }
-        else if (hasTextDecoder) {
+        else {
             if (!textDecoder) {
                 textDecoder = new TextDecoder();
             }
             return textDecoder.decode(this.buffer);
-        }
-        else {
-            return strings.decodeUTF8(this.buffer);
         }
     }
 }

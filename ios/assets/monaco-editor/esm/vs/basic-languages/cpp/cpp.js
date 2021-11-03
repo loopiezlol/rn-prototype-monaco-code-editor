@@ -263,7 +263,7 @@ export var language = {
     // we include these common regular expressions
     symbols: /[=><!~?:&|+\-*\/\^%]+/,
     escapes: /\\(?:[abfnrtv\\"']|x[0-9A-Fa-f]{1,4}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8})/,
-    integersuffix: /(ll|LL|u|U|l|L)?(ll|LL|u|U|l|L)?/,
+    integersuffix: /([uU](ll|LL|l|L)|(ll|LL|l|L)?[uU]?)/,
     floatsuffix: /[fFlL]?/,
     encoding: /u|u8|U|L/,
     // The main tokenizer for our languages
@@ -281,13 +281,16 @@ export var language = {
                     }
                 }
             ],
+            // The preprocessor checks must be before whitespace as they check /^\s*#/ which
+            // otherwise fails to match later after other whitespace has been removed.
+            // Inclusion
+            [/^\s*#\s*include/, { token: 'keyword.directive.include', next: '@include' }],
+            // Preprocessor directive
+            [/^\s*#\s*\w+/, 'keyword.directive'],
             // whitespace
             { include: '@whitespace' },
             // [[ attributes ]].
-            [/\[\[.*\]\]/, 'annotation'],
-            [/^\s*#include/, { token: 'keyword.directive.include', next: '@include' }],
-            // Preprocessor directive
-            [/^\s*#\s*\w+/, 'keyword'],
+            [/\[\s*\[/, { token: 'annotation', next: '@annotation' }],
             // delimiters and operators
             [/[{}()\[\]]/, '@brackets'],
             [/[<>](?!@symbols)/, '@brackets'],
@@ -322,12 +325,18 @@ export var language = {
             [/[ \t\r\n]+/, ''],
             [/\/\*\*(?!\/)/, 'comment.doc', '@doccomment'],
             [/\/\*/, 'comment', '@comment'],
+            [/\/\/.*\\$/, 'comment', '@linecomment'],
             [/\/\/.*$/, 'comment']
         ],
         comment: [
             [/[^\/*]+/, 'comment'],
             [/\*\//, 'comment', '@pop'],
             [/[\/*]/, 'comment']
+        ],
+        //For use with continuous line comments
+        linecomment: [
+            [/.*[^\\]$/, 'comment', '@pop'],
+            [/[^]+/, 'comment']
         ],
         //Identical copy of comment above, except for the addition of .doc
         doccomment: [
@@ -357,6 +366,14 @@ export var language = {
                 }
             ],
             [/.*/, 'string.raw']
+        ],
+        annotation: [
+            { include: '@whitespace' },
+            [/using|alignas/, 'keyword'],
+            [/[a-zA-Z0-9_]+/, 'annotation'],
+            [/[,:]/, 'delimiter'],
+            [/[()]/, '@brackets'],
+            [/\]\s*\]/, { token: 'annotation', next: '@pop' }]
         ],
         include: [
             [

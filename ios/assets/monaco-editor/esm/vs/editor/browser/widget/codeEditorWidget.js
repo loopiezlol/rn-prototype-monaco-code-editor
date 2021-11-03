@@ -11,6 +11,7 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __param = (this && this.__param) || function (paramIndex, decorator) {
     return function (target, key) { decorator(target, key, paramIndex); }
 };
+import '../services/markerDecorations.js';
 import './media/editor.css';
 import * as nls from '../../../nls.js';
 import * as dom from '../../../base/browser/dom.js';
@@ -24,7 +25,7 @@ import { ICodeEditorService } from '../services/codeEditorService.js';
 import { View } from '../view/viewImpl.js';
 import { ViewUserInputEvents } from '../view/viewUserInputEvents.js';
 import { filterValidationDecorations } from '../../common/config/editorOptions.js';
-import { Cursor } from '../../common/controller/cursor.js';
+import { CursorsController } from '../../common/controller/cursor.js';
 import { CursorColumns } from '../../common/controller/cursorCommon.js';
 import { Position } from '../../common/core/position.js';
 import { Range } from '../../common/core/range.js';
@@ -34,7 +35,7 @@ import * as editorCommon from '../../common/editorCommon.js';
 import { EditorContextKeys } from '../../common/editorContextKeys.js';
 import * as modes from '../../common/modes.js';
 import { editorUnnecessaryCodeBorder, editorUnnecessaryCodeOpacity } from '../../common/view/editorColorRegistry.js';
-import { editorErrorBorder, editorErrorForeground, editorHintBorder, editorHintForeground, editorInfoBorder, editorInfoForeground, editorWarningBorder, editorWarningForeground, editorForeground } from '../../../platform/theme/common/colorRegistry.js';
+import { editorErrorBorder, editorErrorForeground, editorHintBorder, editorHintForeground, editorInfoBorder, editorInfoForeground, editorWarningBorder, editorWarningForeground, editorForeground, editorErrorBackground, editorInfoBackground, editorWarningBackground } from '../../../platform/theme/common/colorRegistry.js';
 import { ViewModel } from '../../common/viewModel/viewModelImpl.js';
 import { ICommandService } from '../../../platform/commands/common/commands.js';
 import { IContextKeyService } from '../../../platform/contextkey/common/contextkey.js';
@@ -66,7 +67,7 @@ class ModelData {
     }
 }
 let CodeEditorWidget = class CodeEditorWidget extends Disposable {
-    constructor(domElement, options, codeEditorWidgetOptions, instantiationService, codeEditorService, commandService, contextKeyService, themeService, notificationService, accessibilityService) {
+    constructor(domElement, _options, codeEditorWidgetOptions, instantiationService, codeEditorService, commandService, contextKeyService, themeService, notificationService, accessibilityService) {
         super();
         //#region Eventing
         this._onDidDispose = this._register(new Emitter());
@@ -117,6 +118,8 @@ let CodeEditorWidget = class CodeEditorWidget extends Disposable {
         this.onMouseDrag = this._onMouseDrag.event;
         this._onMouseDrop = this._register(new Emitter());
         this.onMouseDrop = this._onMouseDrop.event;
+        this._onMouseDropCanceled = this._register(new Emitter());
+        this.onMouseDropCanceled = this._onMouseDropCanceled.event;
         this._onContextMenu = this._register(new Emitter());
         this.onContextMenu = this._onContextMenu.event;
         this._onMouseMove = this._register(new Emitter());
@@ -135,9 +138,10 @@ let CodeEditorWidget = class CodeEditorWidget extends Disposable {
         this.onDidScrollChange = this._onDidScrollChange.event;
         this._onDidChangeViewZones = this._register(new Emitter());
         this.onDidChangeViewZones = this._onDidChangeViewZones.event;
-        options = options || {};
+        const options = Object.assign({}, _options);
         this._domElement = domElement;
         this._overflowWidgetsDomNode = options.overflowWidgetsDomNode;
+        delete options.overflowWidgetsDomNode;
         this._id = (++EDITOR_ID);
         this._decorationTypeKeysToIds = {};
         this._decorationTypeSubtypes = {};
@@ -147,8 +151,8 @@ let CodeEditorWidget = class CodeEditorWidget extends Disposable {
         this._register(this._configuration.onDidChange((e) => {
             this._onDidChangeConfiguration.fire(e);
             const options = this._configuration.options;
-            if (e.hasChanged(117 /* layoutInfo */)) {
-                const layoutInfo = options.get(117 /* layoutInfo */);
+            if (e.hasChanged(129 /* layoutInfo */)) {
+                const layoutInfo = options.get(129 /* layoutInfo */);
                 this._onDidLayoutChange.fire(layoutInfo);
             }
         }));
@@ -164,9 +168,9 @@ let CodeEditorWidget = class CodeEditorWidget extends Disposable {
         this._contributions = {};
         this._actions = {};
         this._focusTracker = new CodeEditorWidgetFocusTracker(domElement);
-        this._focusTracker.onChange(() => {
+        this._register(this._focusTracker.onChange(() => {
             this._editorWidgetFocus.setValue(this._focusTracker.hasFocus());
-        });
+        }));
         this._contentWidgets = {};
         this._overlayWidgets = {};
         let contributions;
@@ -177,6 +181,10 @@ let CodeEditorWidget = class CodeEditorWidget extends Disposable {
             contributions = EditorExtensionsRegistry.getEditorContributions();
         }
         for (const desc of contributions) {
+            if (this._contributions[desc.id]) {
+                onUnexpectedError(new Error(`Cannot have two contributions with the same id ${desc.id}`));
+                continue;
+            }
             try {
                 const contribution = this._instantiationService.createInstance(desc.ctor, this);
                 this._contributions[desc.id] = contribution;
@@ -186,6 +194,10 @@ let CodeEditorWidget = class CodeEditorWidget extends Disposable {
             }
         }
         EditorExtensionsRegistry.getEditorActions().forEach((action) => {
+            if (this._actions[action.id]) {
+                onUnexpectedError(new Error(`Cannot have two actions with the same id ${action.id}`));
+                return;
+            }
             const internalAction = new InternalEditorAction(action.id, action.label, action.alias, withNullAsUndefined(action.precondition), () => {
                 return this._instantiationService.invokeFunction((accessor) => {
                     return Promise.resolve(action.runEditorCommand(accessor, this, null));
@@ -212,6 +224,10 @@ let CodeEditorWidget = class CodeEditorWidget extends Disposable {
             const contributionId = keys[i];
             this._contributions[contributionId].dispose();
         }
+        this._contributions = {};
+        this._actions = {};
+        this._contentWidgets = {};
+        this._overlayWidgets = {};
         this._removeDecorationTypes();
         this._postDetachModelCleanup(this._detachModel());
         this._onDidDispose.fire();
@@ -239,7 +255,7 @@ let CodeEditorWidget = class CodeEditorWidget extends Disposable {
         if (!this._modelData) {
             return null;
         }
-        return WordOperations.getWordAtPosition(this._modelData.model, this._configuration.options.get(105 /* wordSeparators */), position);
+        return WordOperations.getWordAtPosition(this._modelData.model, this._configuration.options.get(115 /* wordSeparators */), position);
     }
     getValue(options = null) {
         if (!this._modelData) {
@@ -502,7 +518,7 @@ let CodeEditorWidget = class CodeEditorWidget extends Disposable {
         }
         this._sendRevealRange(Range.lift(range), verticalType, revealHorizontal, scrollType);
     }
-    setSelections(ranges, source = 'api') {
+    setSelections(ranges, source = 'api', reason = 0 /* NotSet */) {
         if (!this._modelData) {
             return;
         }
@@ -514,7 +530,7 @@ let CodeEditorWidget = class CodeEditorWidget extends Disposable {
                 throw new Error('Invalid arguments');
             }
         }
-        this._modelData.viewModel.setSelections(source, ranges);
+        this._modelData.viewModel.setSelections(source, ranges, reason);
     }
     getContentWidth() {
         if (!this._modelData) {
@@ -663,7 +679,12 @@ let CodeEditorWidget = class CodeEditorWidget extends Disposable {
             }
             case "replacePreviousChar" /* ReplacePreviousChar */: {
                 const args = payload;
-                this._replacePreviousChar(source, args.text || '', args.replaceCharCnt || 0);
+                this._compositionType(source, args.text || '', args.replaceCharCnt || 0, 0, 0);
+                return;
+            }
+            case "compositionType" /* CompositionType */: {
+                const args = payload;
+                this._compositionType(source, args.text || '', args.replacePrevCharCnt || 0, args.replaceNextCharCnt || 0, args.positionDelta || 0);
                 return;
             }
             case "paste" /* Paste */: {
@@ -686,6 +707,10 @@ let CodeEditorWidget = class CodeEditorWidget extends Disposable {
         if (this._triggerEditorCommand(source, handlerId, payload)) {
             return;
         }
+        this._triggerCommand(handlerId, payload);
+    }
+    _triggerCommand(handlerId, payload) {
+        this._commandService.executeCommand(handlerId, payload);
     }
     _startComposition() {
         if (!this._modelData) {
@@ -713,11 +738,11 @@ let CodeEditorWidget = class CodeEditorWidget extends Disposable {
             this._onDidType.fire(text);
         }
     }
-    _replacePreviousChar(source, text, replaceCharCnt) {
+    _compositionType(source, text, replacePrevCharCnt, replaceNextCharCnt, positionDelta) {
         if (!this._modelData) {
             return;
         }
-        this._modelData.viewModel.replacePreviousChar(text, replaceCharCnt, source);
+        this._modelData.viewModel.compositionType(text, replacePrevCharCnt, replaceNextCharCnt, positionDelta, source);
     }
     _paste(source, text, pasteOnNewLine, multicursorText, mode) {
         if (!this._modelData || text.length === 0) {
@@ -761,18 +786,29 @@ let CodeEditorWidget = class CodeEditorWidget extends Disposable {
         if (!this._modelData) {
             return false;
         }
-        if (this._configuration.options.get(72 /* readOnly */)) {
+        if (this._configuration.options.get(80 /* readOnly */)) {
             // read only editor => sorry!
             return false;
         }
         this._modelData.model.pushStackElement();
         return true;
     }
+    popUndoStop() {
+        if (!this._modelData) {
+            return false;
+        }
+        if (this._configuration.options.get(80 /* readOnly */)) {
+            // read only editor => sorry!
+            return false;
+        }
+        this._modelData.model.popStackElement();
+        return true;
+    }
     executeEdits(source, edits, endCursorState) {
         if (!this._modelData) {
             return false;
         }
-        if (this._configuration.options.get(72 /* readOnly */)) {
+        if (this._configuration.options.get(80 /* readOnly */)) {
             // read only editor => sorry!
             return false;
         }
@@ -838,7 +874,7 @@ let CodeEditorWidget = class CodeEditorWidget extends Disposable {
     }
     getLayoutInfo() {
         const options = this._configuration.options;
-        const layoutInfo = options.get(117 /* layoutInfo */);
+        const layoutInfo = options.get(129 /* layoutInfo */);
         return layoutInfo;
     }
     createOverviewRuler(cssClassName) {
@@ -965,13 +1001,13 @@ let CodeEditorWidget = class CodeEditorWidget extends Disposable {
         }
         const position = this._modelData.model.validatePosition(rawPosition);
         const options = this._configuration.options;
-        const layoutInfo = options.get(117 /* layoutInfo */);
+        const layoutInfo = options.get(129 /* layoutInfo */);
         const top = CodeEditorWidget._getVerticalOffsetForPosition(this._modelData, position.lineNumber, position.column) - this.getScrollTop();
         const left = this._modelData.view.getOffsetForColumn(position.lineNumber, position.column) + layoutInfo.glyphMarginWidth + layoutInfo.lineNumbersWidth + layoutInfo.decorationsWidth - this.getScrollLeft();
         return {
             top: top,
             left: left,
-            height: options.get(51 /* lineHeight */)
+            height: options.get(58 /* lineHeight */)
         };
     }
     getOffsetForColumn(lineNumber, column) {
@@ -993,7 +1029,7 @@ let CodeEditorWidget = class CodeEditorWidget extends Disposable {
         this._modelData.view.setAriaOptions(options);
     }
     applyFontInfo(target) {
-        Configuration.applyFontInfoSlow(target, this._configuration.options.get(36 /* fontInfo */));
+        Configuration.applyFontInfoSlow(target, this._configuration.options.get(43 /* fontInfo */));
     }
     _attachModel(model) {
         if (!model) {
@@ -1035,7 +1071,7 @@ let CodeEditorWidget = class CodeEditorWidget extends Disposable {
                     break;
                 case 5 /* CursorStateChanged */: {
                     if (e.reachedMaxCursorCount) {
-                        this._notificationService.warn(nls.localize('cursors.maximum', "The number of cursors has been limited to {0}.", Cursor.MAX_CURSOR_COUNT));
+                        this._notificationService.warn(nls.localize('cursors.maximum', "The number of cursors has been limited to {0}.", CursorsController.MAX_CURSOR_COUNT));
                     }
                     const positions = [];
                     for (let i = 0, len = e.selections.length; i < len; i++) {
@@ -1090,8 +1126,8 @@ let CodeEditorWidget = class CodeEditorWidget extends Disposable {
                 type: (text) => {
                     this._type('keyboard', text);
                 },
-                replacePreviousChar: (text, replaceCharCnt) => {
-                    this._replacePreviousChar('keyboard', text, replaceCharCnt);
+                compositionType: (text, replacePrevCharCnt, replaceNextCharCnt, positionDelta) => {
+                    this._compositionType('keyboard', text, replacePrevCharCnt, replaceNextCharCnt, positionDelta);
                 },
                 startComposition: () => {
                     this._startComposition();
@@ -1114,9 +1150,17 @@ let CodeEditorWidget = class CodeEditorWidget extends Disposable {
                     const payload = { text };
                     this._commandService.executeCommand("type" /* Type */, payload);
                 },
-                replacePreviousChar: (text, replaceCharCnt) => {
-                    const payload = { text, replaceCharCnt };
-                    this._commandService.executeCommand("replacePreviousChar" /* ReplacePreviousChar */, payload);
+                compositionType: (text, replacePrevCharCnt, replaceNextCharCnt, positionDelta) => {
+                    // Try if possible to go through the existing `replacePreviousChar` command
+                    if (replaceNextCharCnt || positionDelta) {
+                        // must be handled through the new command
+                        const payload = { text, replacePrevCharCnt, replaceNextCharCnt, positionDelta };
+                        this._commandService.executeCommand("compositionType" /* CompositionType */, payload);
+                    }
+                    else {
+                        const payload = { text, replaceCharCnt: replacePrevCharCnt };
+                        this._commandService.executeCommand("replacePreviousChar" /* ReplacePreviousChar */, payload);
+                    }
                 },
                 startComposition: () => {
                     this._commandService.executeCommand("compositionStart" /* CompositionStart */, {});
@@ -1139,6 +1183,7 @@ let CodeEditorWidget = class CodeEditorWidget extends Disposable {
         viewUserInputEvents.onMouseUp = (e) => this._onMouseUp.fire(e);
         viewUserInputEvents.onMouseDrag = (e) => this._onMouseDrag.fire(e);
         viewUserInputEvents.onMouseDrop = (e) => this._onMouseDrop.fire(e);
+        viewUserInputEvents.onMouseDropCanceled = (e) => this._onMouseDropCanceled.fire(e);
         viewUserInputEvents.onMouseWheel = (e) => this._onMouseWheel.fire(e);
         const view = new View(commandDelegate, this._configuration, this._themeService, viewModel, viewUserInputEvents, this._overflowWidgetsDomNode);
         return [view, true];
@@ -1213,6 +1258,7 @@ class EditorContextKeysManager extends Disposable {
         this._editorTextFocus = EditorContextKeys.editorTextFocus.bindTo(contextKeyService);
         this._editorTabMovesFocus = EditorContextKeys.tabMovesFocus.bindTo(contextKeyService);
         this._editorReadonly = EditorContextKeys.readOnly.bindTo(contextKeyService);
+        this._inDiffEditor = EditorContextKeys.inDiffEditor.bindTo(contextKeyService);
         this._editorColumnSelection = EditorContextKeys.columnSelection.bindTo(contextKeyService);
         this._hasMultipleSelections = EditorContextKeys.hasMultipleSelections.bindTo(contextKeyService);
         this._hasNonEmptySelection = EditorContextKeys.hasNonEmptySelection.bindTo(contextKeyService);
@@ -1234,9 +1280,10 @@ class EditorContextKeysManager extends Disposable {
     }
     _updateFromConfig() {
         const options = this._editor.getOptions();
-        this._editorTabMovesFocus.set(options.get(116 /* tabFocusMode */));
-        this._editorReadonly.set(options.get(72 /* readOnly */));
-        this._editorColumnSelection.set(options.get(13 /* columnSelection */));
+        this._editorTabMovesFocus.set(options.get(128 /* tabFocusMode */));
+        this._editorReadonly.set(options.get(80 /* readOnly */));
+        this._inDiffEditor.set(options.get(53 /* inDiffEditor */));
+        this._editorColumnSelection.set(options.get(18 /* columnSelection */));
     }
     _updateFromSelection() {
         const selections = this._editor.getSelections();
@@ -1279,6 +1326,7 @@ export class EditorModeContext extends Disposable {
         this._hasReferenceProvider = EditorContextKeys.hasReferenceProvider.bindTo(_contextKeyService);
         this._hasRenameProvider = EditorContextKeys.hasRenameProvider.bindTo(_contextKeyService);
         this._hasSignatureHelpProvider = EditorContextKeys.hasSignatureHelpProvider.bindTo(_contextKeyService);
+        this._hasInlayHintsProvider = EditorContextKeys.hasInlayHintsProvider.bindTo(_contextKeyService);
         this._hasDocumentFormattingProvider = EditorContextKeys.hasDocumentFormattingProvider.bindTo(_contextKeyService);
         this._hasDocumentSelectionFormattingProvider = EditorContextKeys.hasDocumentSelectionFormattingProvider.bindTo(_contextKeyService);
         this._hasMultipleDocumentFormattingProvider = EditorContextKeys.hasMultipleDocumentFormattingProvider.bindTo(_contextKeyService);
@@ -1304,6 +1352,7 @@ export class EditorModeContext extends Disposable {
         this._register(modes.DocumentFormattingEditProviderRegistry.onDidChange(update));
         this._register(modes.DocumentRangeFormattingEditProviderRegistry.onDidChange(update));
         this._register(modes.SignatureHelpProviderRegistry.onDidChange(update));
+        this._register(modes.InlayHintsProviderRegistry.onDidChange(update));
         update();
     }
     dispose() {
@@ -1351,6 +1400,7 @@ export class EditorModeContext extends Disposable {
             this._hasReferenceProvider.set(modes.ReferenceProviderRegistry.has(model));
             this._hasRenameProvider.set(modes.RenameProviderRegistry.has(model));
             this._hasSignatureHelpProvider.set(modes.SignatureHelpProviderRegistry.has(model));
+            this._hasInlayHintsProvider.set(modes.InlayHintsProviderRegistry.has(model));
             this._hasDocumentFormattingProvider.set(modes.DocumentFormattingEditProviderRegistry.has(model) || modes.DocumentRangeFormattingEditProviderRegistry.has(model));
             this._hasDocumentSelectionFormattingProvider.set(modes.DocumentRangeFormattingEditProviderRegistry.has(model));
             this._hasMultipleDocumentFormattingProvider.set(modes.DocumentFormattingEditProviderRegistry.all(model).length + modes.DocumentRangeFormattingEditProviderRegistry.all(model).length > 1);
@@ -1398,6 +1448,10 @@ registerThemingParticipant((theme, collector) => {
     if (errorForeground) {
         collector.addRule(`.monaco-editor .${"squiggly-error" /* EditorErrorDecoration */} { background: url("data:image/svg+xml,${getSquigglySVGData(errorForeground)}") repeat-x bottom left; }`);
     }
+    const errorBackground = theme.getColor(editorErrorBackground);
+    if (errorBackground) {
+        collector.addRule(`.monaco-editor .${"squiggly-error" /* EditorErrorDecoration */}::before { display: block; content: ''; width: 100%; height: 100%; background: ${errorBackground}; }`);
+    }
     const warningBorderColor = theme.getColor(editorWarningBorder);
     if (warningBorderColor) {
         collector.addRule(`.monaco-editor .${"squiggly-warning" /* EditorWarningDecoration */} { border-bottom: 4px double ${warningBorderColor}; }`);
@@ -1406,6 +1460,10 @@ registerThemingParticipant((theme, collector) => {
     if (warningForeground) {
         collector.addRule(`.monaco-editor .${"squiggly-warning" /* EditorWarningDecoration */} { background: url("data:image/svg+xml,${getSquigglySVGData(warningForeground)}") repeat-x bottom left; }`);
     }
+    const warningBackground = theme.getColor(editorWarningBackground);
+    if (warningBackground) {
+        collector.addRule(`.monaco-editor .${"squiggly-warning" /* EditorWarningDecoration */}::before { display: block; content: ''; width: 100%; height: 100%; background: ${warningBackground}; }`);
+    }
     const infoBorderColor = theme.getColor(editorInfoBorder);
     if (infoBorderColor) {
         collector.addRule(`.monaco-editor .${"squiggly-info" /* EditorInfoDecoration */} { border-bottom: 4px double ${infoBorderColor}; }`);
@@ -1413,6 +1471,10 @@ registerThemingParticipant((theme, collector) => {
     const infoForeground = theme.getColor(editorInfoForeground);
     if (infoForeground) {
         collector.addRule(`.monaco-editor .${"squiggly-info" /* EditorInfoDecoration */} { background: url("data:image/svg+xml,${getSquigglySVGData(infoForeground)}") repeat-x bottom left; }`);
+    }
+    const infoBackground = theme.getColor(editorInfoBackground);
+    if (infoBackground) {
+        collector.addRule(`.monaco-editor .${"squiggly-info" /* EditorInfoDecoration */}::before { display: block; content: ''; width: 100%; height: 100%; background: ${infoBackground}; }`);
     }
     const hintBorderColor = theme.getColor(editorHintBorder);
     if (hintBorderColor) {

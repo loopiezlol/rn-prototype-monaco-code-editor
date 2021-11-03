@@ -3,7 +3,9 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 import * as nls from '../../../nls.js';
+import { isFirefox } from '../../../base/browser/browser.js';
 import * as types from '../../../base/common/types.js';
+import { status } from '../../../base/browser/ui/aria/aria.js';
 import { Command, EditorCommand, registerEditorCommand, UndoCommand, RedoCommand, SelectAllCommand } from '../editorExtensions.js';
 import { ICodeEditorService } from '../services/codeEditorService.js';
 import { ColumnSelection } from '../../common/controller/cursorColumnSelection.js';
@@ -155,7 +157,7 @@ export var RevealLine_;
             return false;
         }
         const reveaLineArg = arg;
-        if (!types.isNumber(reveaLineArg.lineNumber)) {
+        if (!types.isNumber(reveaLineArg.lineNumber) && !types.isString(reveaLineArg.lineNumber)) {
             return false;
         }
         if (!types.isUndefined(reveaLineArg.at) && !types.isString(reveaLineArg.at)) {
@@ -170,7 +172,7 @@ export var RevealLine_;
                 name: 'Reveal line argument object',
                 description: `Property-value pairs that can be passed through this argument:
 					* 'lineNumber': A mandatory line number value.
-					* 'at': Logical position at which line has to be revealed .
+					* 'at': Logical position at which line has to be revealed.
 						\`\`\`
 						'top', 'center', 'bottom'
 						\`\`\`
@@ -181,7 +183,7 @@ export var RevealLine_;
                     'required': ['lineNumber'],
                     'properties': {
                         'lineNumber': {
-                            'type': 'number',
+                            'type': ['number', 'string'],
                         },
                         'at': {
                             'type': 'string',
@@ -204,17 +206,16 @@ export var RevealLine_;
 class EditorOrNativeTextInputCommand {
     constructor(target) {
         // 1. handle case when focus is in editor.
-        target.addImplementation(10000, (accessor, args) => {
+        target.addImplementation(10000, 'code-editor', (accessor, args) => {
             // Only if editor text focus (i.e. not if editor has widget focus).
             const focusedEditor = accessor.get(ICodeEditorService).getFocusedCodeEditor();
             if (focusedEditor && focusedEditor.hasTextFocus()) {
-                this.runEditorCommand(accessor, focusedEditor, args);
-                return true;
+                return this._runEditorCommand(accessor, focusedEditor, args);
             }
             return false;
         });
         // 2. handle case when focus is in some other `input` / `textarea`.
-        target.addImplementation(1000, (accessor, args) => {
+        target.addImplementation(1000, 'generic-dom-input-textarea', (accessor, args) => {
             // Only if focused on an element that allows for entering text
             const activeElement = document.activeElement;
             if (activeElement && ['input', 'textarea'].indexOf(activeElement.tagName.toLowerCase()) >= 0) {
@@ -224,16 +225,22 @@ class EditorOrNativeTextInputCommand {
             return false;
         });
         // 3. (default) handle case when focus is somewhere else.
-        target.addImplementation(0, (accessor, args) => {
+        target.addImplementation(0, 'generic-dom', (accessor, args) => {
             // Redirecting to active editor
             const activeEditor = accessor.get(ICodeEditorService).getActiveCodeEditor();
             if (activeEditor) {
                 activeEditor.focus();
-                this.runEditorCommand(accessor, activeEditor, args);
-                return true;
+                return this._runEditorCommand(accessor, activeEditor, args);
             }
             return false;
         });
+    }
+    _runEditorCommand(accessor, editor, args) {
+        const result = this.runEditorCommand(accessor, editor, args);
+        if (result) {
+            return result;
+        }
+        return true;
     }
 }
 export var CoreNavigationCommands;
@@ -422,16 +429,18 @@ export var CoreNavigationCommands;
                 case 1 /* Right */:
                 case 2 /* Up */:
                 case 3 /* Down */:
-                case 4 /* WrappedLineStart */:
-                case 5 /* WrappedLineFirstNonWhitespaceCharacter */:
-                case 6 /* WrappedLineColumnCenter */:
-                case 7 /* WrappedLineEnd */:
-                case 8 /* WrappedLineLastNonWhitespaceCharacter */:
+                case 4 /* PrevBlankLine */:
+                case 5 /* NextBlankLine */:
+                case 6 /* WrappedLineStart */:
+                case 7 /* WrappedLineFirstNonWhitespaceCharacter */:
+                case 8 /* WrappedLineColumnCenter */:
+                case 9 /* WrappedLineEnd */:
+                case 10 /* WrappedLineLastNonWhitespaceCharacter */:
                     return CursorMoveCommands.simpleMove(viewModel, cursors, args.direction, inSelectionMode, value, args.unit);
-                case 9 /* ViewPortTop */:
-                case 11 /* ViewPortBottom */:
-                case 10 /* ViewPortCenter */:
-                case 12 /* ViewPortIfOutside */:
+                case 11 /* ViewPortTop */:
+                case 13 /* ViewPortBottom */:
+                case 12 /* ViewPortCenter */:
+                case 14 /* ViewPortIfOutside */:
                     return CursorMoveCommands.viewportMove(viewModel, cursors, args.direction, inSelectionMode, value);
                 default:
                     return null;
@@ -1258,6 +1267,7 @@ export var CoreNavigationCommands;
                 viewModel.getPrimaryCursorState()
             ]);
             viewModel.revealPrimaryCursor(args.source, true);
+            status(nls.localize('removedCursor', "Removed secondary cursors"));
         }
     });
     CoreNavigationCommands.RevealLine = registerEditorCommand(new class extends CoreEditorCommand {
@@ -1270,7 +1280,8 @@ export var CoreNavigationCommands;
         }
         runCoreEditorCommand(viewModel, args) {
             const revealLineArg = args;
-            let lineNumber = (revealLineArg.lineNumber || 0) + 1;
+            const lineNumberArg = revealLineArg.lineNumber || 0;
+            let lineNumber = typeof lineNumberArg === 'number' ? (lineNumberArg + 1) : (parseInt(lineNumberArg) + 1);
             if (lineNumber < 1) {
                 lineNumber = 1;
             }
@@ -1304,6 +1315,10 @@ export var CoreNavigationCommands;
             super(SelectAllCommand);
         }
         runDOMCommand() {
+            if (isFirefox) {
+                document.activeElement.focus();
+                document.activeElement.select();
+            }
             document.execCommand('selectAll');
         }
         runEditorCommand(accessor, editor, args) {
@@ -1437,7 +1452,7 @@ export var CoreEditingCommands;
             });
         }
         runCoreEditingCommand(editor, viewModel, args) {
-            const [shouldPushStackElementBefore, commands] = DeleteOperations.deleteLeft(viewModel.getPrevEditOperationType(), viewModel.cursorConfig, viewModel.model, viewModel.getCursorStates().map(s => s.modelState.selection));
+            const [shouldPushStackElementBefore, commands] = DeleteOperations.deleteLeft(viewModel.getPrevEditOperationType(), viewModel.cursorConfig, viewModel.model, viewModel.getCursorStates().map(s => s.modelState.selection), viewModel.getCursorAutoClosedCharacters());
             if (shouldPushStackElementBefore) {
                 editor.pushUndoStop();
             }
@@ -1475,10 +1490,10 @@ export var CoreEditingCommands;
             document.execCommand('undo');
         }
         runEditorCommand(accessor, editor, args) {
-            if (!editor.hasModel() || editor.getOption(72 /* readOnly */) === true) {
+            if (!editor.hasModel() || editor.getOption(80 /* readOnly */) === true) {
                 return;
             }
-            editor.getModel().undo();
+            return editor.getModel().undo();
         }
     }();
     CoreEditingCommands.Redo = new class extends EditorOrNativeTextInputCommand {
@@ -1489,10 +1504,10 @@ export var CoreEditingCommands;
             document.execCommand('redo');
         }
         runEditorCommand(accessor, editor, args) {
-            if (!editor.hasModel() || editor.getOption(72 /* readOnly */) === true) {
+            if (!editor.hasModel() || editor.getOption(80 /* readOnly */) === true) {
                 return;
             }
-            editor.getModel().redo();
+            return editor.getModel().redo();
         }
     }();
 })(CoreEditingCommands || (CoreEditingCommands = {}));
@@ -1536,6 +1551,7 @@ registerOverwritableCommand("type" /* Type */, {
         }]
 });
 registerOverwritableCommand("replacePreviousChar" /* ReplacePreviousChar */);
+registerOverwritableCommand("compositionType" /* CompositionType */);
 registerOverwritableCommand("compositionStart" /* CompositionStart */);
 registerOverwritableCommand("compositionEnd" /* CompositionEnd */);
 registerOverwritableCommand("paste" /* Paste */);

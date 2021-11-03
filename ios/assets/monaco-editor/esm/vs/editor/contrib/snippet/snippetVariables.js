@@ -2,14 +2,15 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-import * as nls from '../../../nls.js';
+import { normalizeDriveLetter } from '../../../base/common/labels.js';
 import * as path from '../../../base/common/path.js';
 import { dirname } from '../../../base/common/resources.js';
-import { Text } from './snippetParser.js';
+import { commonPrefixLength, getLeadingWhitespace, isFalsyOrWhitespace, splitLines } from '../../../base/common/strings.js';
+import { generateUuid } from '../../../base/common/uuid.js';
 import { LanguageConfigurationRegistry } from '../../common/modes/languageConfigurationRegistry.js';
-import { getLeadingWhitespace, commonPrefixLength, isFalsyOrWhitespace } from '../../../base/common/strings.js';
+import { Text } from './snippetParser.js';
+import * as nls from '../../../nls.js';
 import { isSingleFolderWorkspaceIdentifier, toWorkspaceIdentifier, WORKSPACE_EXTENSION } from '../../../platform/workspaces/common/workspaces.js';
-import { normalizeDriveLetter } from '../../../base/common/labels.js';
 export class CompositeSnippetVariableResolver {
     constructor(_delegates) {
         this._delegates = _delegates;
@@ -59,7 +60,7 @@ export class SelectionBasedVariableResolver {
                         return false;
                     }
                     if (marker instanceof Text) {
-                        varLeadingWhitespace = getLeadingWhitespace(marker.value.split(/\r\n|\r|\n/).pop());
+                        varLeadingWhitespace = getLeadingWhitespace(splitLines(marker.value).pop());
                     }
                     return true;
                 });
@@ -108,14 +109,17 @@ export class ModelBasedVariableResolver {
                 return name.slice(0, idx);
             }
         }
-        else if (name === 'TM_DIRECTORY' && this._labelService) {
+        else if (name === 'TM_DIRECTORY') {
             if (path.dirname(this._model.uri.fsPath) === '.') {
                 return '';
             }
             return this._labelService.getUriLabel(dirname(this._model.uri));
         }
-        else if (name === 'TM_FILEPATH' && this._labelService) {
+        else if (name === 'TM_FILEPATH') {
             return this._labelService.getUriLabel(this._model.uri);
+        }
+        else if (name === 'RELATIVE_FILEPATH') {
+            return this._labelService.getUriLabel(this._model.uri, { relative: true, noPrefix: true });
         }
         return undefined;
     }
@@ -174,43 +178,46 @@ export class CommentBasedVariableResolver {
     }
 }
 export class TimeBasedVariableResolver {
+    constructor() {
+        this._date = new Date();
+    }
     resolve(variable) {
         const { name } = variable;
         if (name === 'CURRENT_YEAR') {
-            return String(new Date().getFullYear());
+            return String(this._date.getFullYear());
         }
         else if (name === 'CURRENT_YEAR_SHORT') {
-            return String(new Date().getFullYear()).slice(-2);
+            return String(this._date.getFullYear()).slice(-2);
         }
         else if (name === 'CURRENT_MONTH') {
-            return String(new Date().getMonth().valueOf() + 1).padStart(2, '0');
+            return String(this._date.getMonth().valueOf() + 1).padStart(2, '0');
         }
         else if (name === 'CURRENT_DATE') {
-            return String(new Date().getDate().valueOf()).padStart(2, '0');
+            return String(this._date.getDate().valueOf()).padStart(2, '0');
         }
         else if (name === 'CURRENT_HOUR') {
-            return String(new Date().getHours().valueOf()).padStart(2, '0');
+            return String(this._date.getHours().valueOf()).padStart(2, '0');
         }
         else if (name === 'CURRENT_MINUTE') {
-            return String(new Date().getMinutes().valueOf()).padStart(2, '0');
+            return String(this._date.getMinutes().valueOf()).padStart(2, '0');
         }
         else if (name === 'CURRENT_SECOND') {
-            return String(new Date().getSeconds().valueOf()).padStart(2, '0');
+            return String(this._date.getSeconds().valueOf()).padStart(2, '0');
         }
         else if (name === 'CURRENT_DAY_NAME') {
-            return TimeBasedVariableResolver.dayNames[new Date().getDay()];
+            return TimeBasedVariableResolver.dayNames[this._date.getDay()];
         }
         else if (name === 'CURRENT_DAY_NAME_SHORT') {
-            return TimeBasedVariableResolver.dayNamesShort[new Date().getDay()];
+            return TimeBasedVariableResolver.dayNamesShort[this._date.getDay()];
         }
         else if (name === 'CURRENT_MONTH_NAME') {
-            return TimeBasedVariableResolver.monthNames[new Date().getMonth()];
+            return TimeBasedVariableResolver.monthNames[this._date.getMonth()];
         }
         else if (name === 'CURRENT_MONTH_NAME_SHORT') {
-            return TimeBasedVariableResolver.monthNamesShort[new Date().getMonth()];
+            return TimeBasedVariableResolver.monthNamesShort[this._date.getMonth()];
         }
         else if (name === 'CURRENT_SECONDS_UNIX') {
-            return String(Math.floor(Date.now() / 1000));
+            return String(Math.floor(this._date.getTime() / 1000));
         }
         return undefined;
     }
@@ -242,7 +249,7 @@ export class WorkspaceBasedVariableResolver {
     }
     _resolveWorkspaceName(workspaceIdentifier) {
         if (isSingleFolderWorkspaceIdentifier(workspaceIdentifier)) {
-            return path.basename(workspaceIdentifier.path);
+            return path.basename(workspaceIdentifier.uri.path);
         }
         let filename = path.basename(workspaceIdentifier.configPath.path);
         if (filename.endsWith(WORKSPACE_EXTENSION)) {
@@ -252,7 +259,7 @@ export class WorkspaceBasedVariableResolver {
     }
     _resoveWorkspacePath(workspaceIdentifier) {
         if (isSingleFolderWorkspaceIdentifier(workspaceIdentifier)) {
-            return normalizeDriveLetter(workspaceIdentifier.fsPath);
+            return normalizeDriveLetter(workspaceIdentifier.uri.fsPath);
         }
         let filename = path.basename(workspaceIdentifier.configPath.path);
         let folderpath = workspaceIdentifier.configPath.fsPath;
@@ -270,6 +277,9 @@ export class RandomBasedVariableResolver {
         }
         else if (name === 'RANDOM_HEX') {
             return Math.random().toString(16).slice(-6);
+        }
+        else if (name === 'UUID') {
+            return generateUuid();
         }
         return undefined;
     }

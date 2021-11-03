@@ -8,18 +8,18 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
     else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
     return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
-import { Iterable } from '../../../common/iterator.js';
 import { AbstractTree } from './abstractTree.js';
-import { ObjectTreeModel } from './objectTreeModel.js';
 import { CompressibleObjectTreeModel } from './compressedObjectTreeModel.js';
+import { ObjectTreeModel } from './objectTreeModel.js';
 import { memoize } from '../../../common/decorators.js';
+import { Iterable } from '../../../common/iterator.js';
 export class ObjectTree extends AbstractTree {
     constructor(user, container, delegate, renderers, options = {}) {
         super(user, container, delegate, renderers, options);
     }
     get onDidChangeCollapseState() { return this.model.onDidChangeCollapseState; }
-    setChildren(element, children = Iterable.empty()) {
-        this.model.setChildren(element, children);
+    setChildren(element, children = Iterable.empty(), options) {
+        this.model.setChildren(element, children, options);
     }
     rerender(element) {
         if (element === undefined) {
@@ -79,8 +79,9 @@ class CompressibleRenderer {
     }
     renderTwistie(element, twistieElement) {
         if (this.renderer.renderTwistie) {
-            this.renderer.renderTwistie(element, twistieElement);
+            return this.renderer.renderTwistie(element, twistieElement);
         }
+        return false;
     }
 }
 __decorate([
@@ -111,8 +112,8 @@ export class CompressibleObjectTree extends ObjectTree {
         const compressibleRenderers = renderers.map(r => new CompressibleRenderer(compressedTreeNodeProvider, r));
         super(user, container, delegate, compressibleRenderers, asObjectTreeOptions(compressedTreeNodeProvider, options));
     }
-    setChildren(element, children = Iterable.empty()) {
-        this.model.setChildren(element, children);
+    setChildren(element, children = Iterable.empty(), options) {
+        this.model.setChildren(element, children, options);
     }
     createModel(user, view, options) {
         return new CompressibleObjectTreeModel(user, view, options);

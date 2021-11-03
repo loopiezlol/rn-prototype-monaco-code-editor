@@ -38,6 +38,29 @@ export class USLayoutResolvedKeybinding extends BaseResolvedKeybinding {
         }
         return KeyCodeUtils.toString(keybinding.keyCode);
     }
+    _keyCodeToElectronAccelerator(keyCode) {
+        if (keyCode >= 93 /* NUMPAD_0 */ && keyCode <= 108 /* NUMPAD_DIVIDE */) {
+            // Electron cannot handle numpad keys
+            return null;
+        }
+        switch (keyCode) {
+            case 16 /* UpArrow */:
+                return 'Up';
+            case 18 /* DownArrow */:
+                return 'Down';
+            case 15 /* LeftArrow */:
+                return 'Left';
+            case 17 /* RightArrow */:
+                return 'Right';
+        }
+        return KeyCodeUtils.toString(keyCode);
+    }
+    _getElectronAccelerator(keybinding) {
+        if (keybinding.isDuplicateModifierCase()) {
+            return null;
+        }
+        return this._keyCodeToElectronAccelerator(keybinding.keyCode);
+    }
     _getDispatchPart(keybinding) {
         return USLayoutResolvedKeybinding.getDispatchStr(keybinding);
     }
@@ -60,5 +83,20 @@ export class USLayoutResolvedKeybinding extends BaseResolvedKeybinding {
         }
         result += KeyCodeUtils.toString(keybinding.keyCode);
         return result;
+    }
+    _getSingleModifierDispatchPart(keybinding) {
+        if (keybinding.keyCode === 5 /* Ctrl */ && !keybinding.shiftKey && !keybinding.altKey && !keybinding.metaKey) {
+            return 'ctrl';
+        }
+        if (keybinding.keyCode === 4 /* Shift */ && !keybinding.ctrlKey && !keybinding.altKey && !keybinding.metaKey) {
+            return 'shift';
+        }
+        if (keybinding.keyCode === 6 /* Alt */ && !keybinding.ctrlKey && !keybinding.shiftKey && !keybinding.metaKey) {
+            return 'alt';
+        }
+        if (keybinding.keyCode === 57 /* Meta */ && !keybinding.ctrlKey && !keybinding.shiftKey && !keybinding.altKey) {
+            return 'meta';
+        }
+        return null;
     }
 }

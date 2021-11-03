@@ -3,25 +3,37 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 import * as DOM from './dom.js';
+import * as dompurify from './dompurify/dompurify.js';
+import { DomEmitter } from './event.js';
 import { createElement } from './formattedTextRenderer.js';
+import { StandardMouseEvent } from './mouseEvent.js';
+import { renderLabelWithIcons } from './ui/iconLabel/iconLabels.js';
+import { raceCancellation } from '../common/async.js';
+import { CancellationTokenSource } from '../common/cancellation.js';
 import { onUnexpectedError } from '../common/errors.js';
+import { Event } from '../common/event.js';
 import { parseHrefAndDimensions, removeMarkdownEscapes } from '../common/htmlContent.js';
+import { markdownEscapeEscapedIcons } from '../common/iconLabels.js';
 import { defaultGenerator } from '../common/idGenerator.js';
+import { DisposableStore } from '../common/lifecycle.js';
 import * as marked from '../common/marked/marked.js';
-import { insane } from '../common/insane/insane.js';
 import { parse } from '../common/marshalling.js';
+import { FileAccess, Schemas } from '../common/network.js';
 import { cloneAndChange } from '../common/objects.js';
+import { resolvePath } from '../common/resources.js';
 import { escape } from '../common/strings.js';
 import { URI } from '../common/uri.js';
-import { Schemas } from '../common/network.js';
-import { renderCodicons, markdownEscapeEscapedCodicons } from '../common/codicons.js';
-import { resolvePath } from '../common/resources.js';
-import { StandardMouseEvent } from './mouseEvent.js';
 /**
- * Create html nodes for the given content element.
+ * Low-level way create a html element from a markdown string.
+ *
+ * **Note** that for most cases you should be using [`MarkdownRenderer`](./src/vs/editor/browser/core/markdownRenderer.ts)
+ * which comes with support for pretty code block rendering and which uses the default way of handling links.
  */
 export function renderMarkdown(markdown, options = {}, markedOptions = {}) {
     var _a;
+    const disposables = new DisposableStore();
+    let isDisposed = false;
+    const cts = disposables.add(new CancellationTokenSource());
     const element = createElement(options);
     const _uriMassage = function (part) {
         let data;
@@ -50,15 +62,18 @@ export function renderMarkdown(markdown, options = {}, markedOptions = {}) {
             return href; // no uri exists
         }
         let uri = URI.revive(data);
-        if (URI.parse(href).toString() === uri.toString()) {
-            return href; // no tranformation performed
-        }
         if (isDomUri) {
+            if (href.startsWith(Schemas.data + ':')) {
+                return href;
+            }
             // this URI will end up as "src"-attribute of a dom node
             // and because of that special rewriting needs to be done
             // so that the URI uses a protocol that's understood by
             // browsers (like http or https)
-            return DOM.asDomUri(uri).toString(true);
+            return FileAccess.asBrowserUri(uri).toString(true);
+        }
+        if (URI.parse(href).toString() === uri.toString()) {
+            return href; // no transformation performed
         }
         if (uri.query) {
             uri = uri.with({ query: _uriMassage(uri.query) });
@@ -128,7 +143,11 @@ export function renderMarkdown(markdown, options = {}, markedOptions = {}) {
         }
     };
     renderer.paragraph = (text) => {
-        return `<p>${markdown.supportThemeIcons ? renderCodicons(text) : text}</p>`;
+        if (markdown.supportThemeIcons) {
+            const elements = renderLabelWithIcons(text);
+            text = elements.map(e => typeof e === 'string' ? e : e.outerHTML).join('');
+        }
+        return `<p>${text}</p>`;
     };
     if (options.codeBlockRenderer) {
         renderer.code = (code, lang) => {
@@ -136,101 +155,160 @@ export function renderMarkdown(markdown, options = {}, markedOptions = {}) {
             // when code-block rendering is async we return sync
             // but update the node with the real result later.
             const id = defaultGenerator.nextId();
-            const promise = Promise.all([value, withInnerHTML]).then(values => {
-                const strValue = values[0];
-                const span = element.querySelector(`div[data-code="${id}"]`);
-                if (span) {
-                    span.innerHTML = strValue;
+            raceCancellation(Promise.all([value, withInnerHTML]), cts.token).then(values => {
+                var _a;
+                if (!isDisposed && values) {
+                    const span = element.querySelector(`div[data-code="${id}"]`);
+                    if (span) {
+                        DOM.reset(span, values[0]);
+                    }
+                    (_a = options.asyncRenderCallback) === null || _a === void 0 ? void 0 : _a.call(options);
                 }
-            }).catch(err => {
+            }).catch(() => {
                 // ignore
             });
-            if (options.codeBlockRenderCallback) {
-                promise.then(options.codeBlockRenderCallback);
-            }
             return `<div class="code" data-code="${id}">${escape(code)}</div>`;
         };
     }
-    const actionHandler = options.actionHandler;
-    if (actionHandler) {
-        [DOM.EventType.CLICK, DOM.EventType.AUXCLICK].forEach(event => {
-            actionHandler.disposeables.add(DOM.addDisposableListener(element, event, (e) => {
-                const mouseEvent = new StandardMouseEvent(e);
-                if (!mouseEvent.leftButton && !mouseEvent.middleButton) {
+    if (options.actionHandler) {
+        const onClick = options.actionHandler.disposables.add(new DomEmitter(element, 'click'));
+        const onAuxClick = options.actionHandler.disposables.add(new DomEmitter(element, 'auxclick'));
+        options.actionHandler.disposables.add(Event.any(onClick.event, onAuxClick.event)(e => {
+            const mouseEvent = new StandardMouseEvent(e);
+            if (!mouseEvent.leftButton && !mouseEvent.middleButton) {
+                return;
+            }
+            let target = mouseEvent.target;
+            if (target.tagName !== 'A') {
+                target = target.parentElement;
+                if (!target || target.tagName !== 'A') {
                     return;
                 }
-                let target = mouseEvent.target;
-                if (target.tagName !== 'A') {
-                    target = target.parentElement;
-                    if (!target || target.tagName !== 'A') {
-                        return;
-                    }
+            }
+            try {
+                const href = target.dataset['href'];
+                if (href) {
+                    options.actionHandler.callback(href, mouseEvent);
                 }
-                try {
-                    const href = target.dataset['href'];
-                    if (href) {
-                        actionHandler.callback(href, mouseEvent);
-                    }
-                }
-                catch (err) {
-                    onUnexpectedError(err);
-                }
-                finally {
-                    mouseEvent.preventDefault();
-                }
-            }));
-        });
+            }
+            catch (err) {
+                onUnexpectedError(err);
+            }
+            finally {
+                mouseEvent.preventDefault();
+            }
+        }));
     }
-    // Use our own sanitizer so that we can let through only spans.
-    // Otherwise, we'd be letting all html be rendered.
-    // If we want to allow markdown permitted tags, then we can delete sanitizer and sanitize.
-    markedOptions.sanitizer = (html) => {
-        const match = markdown.isTrusted ? html.match(/^(<span[^<]+>)|(<\/\s*span>)$/) : undefined;
-        return match ? html : '';
-    };
-    markedOptions.sanitize = true;
+    if (!markdown.supportHtml) {
+        // TODO: Can we deprecated this in favor of 'supportHtml'?
+        // Use our own sanitizer so that we can let through only spans.
+        // Otherwise, we'd be letting all html be rendered.
+        // If we want to allow markdown permitted tags, then we can delete sanitizer and sanitize.
+        // We always pass the output through dompurify after this so that we don't rely on
+        // marked for sanitization.
+        markedOptions.sanitizer = (html) => {
+            const match = markdown.isTrusted ? html.match(/^(<span[^>]+>)|(<\/\s*span>)$/) : undefined;
+            return match ? html : '';
+        };
+        markedOptions.sanitize = true;
+        markedOptions.silent = true;
+    }
     markedOptions.renderer = renderer;
-    const allowedSchemes = [Schemas.http, Schemas.https, Schemas.mailto, Schemas.data, Schemas.file, Schemas.vscodeRemote, Schemas.vscodeRemoteResource];
-    if (markdown.isTrusted) {
-        allowedSchemes.push(Schemas.command);
-    }
     // values that are too long will freeze the UI
     let value = (_a = markdown.value) !== null && _a !== void 0 ? _a : '';
     if (value.length > 100000) {
         value = `${value.substr(0, 100000)}…`;
     }
-    const renderedMarkdown = marked.parse(markdown.supportThemeIcons ? markdownEscapeEscapedCodicons(value) : value, markedOptions);
-    function filter(token) {
-        if (token.tag === 'span' && markdown.isTrusted && (Object.keys(token.attrs).length === 1)) {
-            if (token.attrs['style']) {
-                return !!token.attrs['style'].match(/^(color\:#[0-9a-fA-F]+;)?(background-color\:#[0-9a-fA-F]+;)?$/);
-            }
-            else if (token.attrs['class']) {
-                // The class should match codicon rendering in src\vs\base\common\codicons.ts
-                return !!token.attrs['class'].match(/^codicon codicon-[a-z\-]+( codicon-animation-[a-z\-]+)?$/);
-            }
-            return false;
-        }
-        return true;
+    // escape theme icons
+    if (markdown.supportThemeIcons) {
+        value = markdownEscapeEscapedIcons(value);
     }
-    element.innerHTML = insane(renderedMarkdown, {
-        allowedSchemes,
-        // allowedTags should included everything that markdown renders to.
-        // Since we have our own sanitize function for marked, it's possible we missed some tag so let insane make sure.
-        // HTML tags that can result from markdown are from reading https://spec.commonmark.org/0.29/
-        // HTML table tags that can result from markdown are from https://github.github.com/gfm/#tables-extension-
-        allowedTags: ['ul', 'li', 'p', 'code', 'blockquote', 'ol', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'em', 'pre', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'div', 'del', 'a', 'strong', 'br', 'img', 'span'],
-        allowedAttributes: {
-            'a': ['href', 'name', 'target', 'data-href'],
-            'img': ['src', 'title', 'alt', 'width', 'height'],
-            'div': ['class', 'data-code'],
-            'span': ['class', 'style'],
-            // https://github.com/microsoft/vscode/issues/95937
-            'th': ['align'],
-            'td': ['align']
-        },
-        filter
-    });
+    const renderedMarkdown = marked.parse(value, markedOptions);
+    element.innerHTML = sanitizeRenderedMarkdown(markdown, renderedMarkdown);
+    // signal that async code blocks can be now be inserted
     signalInnerHTML();
-    return element;
+    // signal size changes for image tags
+    if (options.asyncRenderCallback) {
+        for (const img of element.getElementsByTagName('img')) {
+            const listener = disposables.add(DOM.addDisposableListener(img, 'load', () => {
+                listener.dispose();
+                options.asyncRenderCallback();
+            }));
+        }
+    }
+    return {
+        element,
+        dispose: () => {
+            isDisposed = true;
+            cts.cancel();
+            disposables.dispose();
+        }
+    };
+}
+function sanitizeRenderedMarkdown(options, renderedMarkdown) {
+    const { config, allowedSchemes } = getSanitizerOptions(options);
+    dompurify.addHook('uponSanitizeAttribute', (element, e) => {
+        if (e.attrName === 'style' || e.attrName === 'class') {
+            if (element.tagName === 'SPAN') {
+                if (e.attrName === 'style') {
+                    e.keepAttr = /^(color\:#[0-9a-fA-F]+;)?(background-color\:#[0-9a-fA-F]+;)?$/.test(e.attrValue);
+                    return;
+                }
+                else if (e.attrName === 'class') {
+                    e.keepAttr = /^codicon codicon-[a-z\-]+( codicon-modifier-[a-z\-]+)?$/.test(e.attrValue);
+                    return;
+                }
+            }
+            e.keepAttr = false;
+            return;
+        }
+    });
+    // build an anchor to map URLs to
+    const anchor = document.createElement('a');
+    // https://github.com/cure53/DOMPurify/blob/main/demos/hooks-scheme-allowlist.html
+    dompurify.addHook('afterSanitizeAttributes', (node) => {
+        // check all href/src attributes for validity
+        for (const attr of ['href', 'src']) {
+            if (node.hasAttribute(attr)) {
+                anchor.href = node.getAttribute(attr);
+                if (!allowedSchemes.includes(anchor.protocol.replace(/:$/, ''))) {
+                    node.removeAttribute(attr);
+                }
+            }
+        }
+    });
+    try {
+        return dompurify.sanitize(renderedMarkdown, Object.assign(Object.assign({}, config), { RETURN_TRUSTED_TYPE: true }));
+    }
+    finally {
+        dompurify.removeHook('uponSanitizeAttribute');
+        dompurify.removeHook('afterSanitizeAttributes');
+    }
+}
+function getSanitizerOptions(options) {
+    const allowedSchemes = [
+        Schemas.http,
+        Schemas.https,
+        Schemas.mailto,
+        Schemas.data,
+        Schemas.file,
+        Schemas.vscodeFileResource,
+        Schemas.vscodeRemote,
+        Schemas.vscodeRemoteResource,
+    ];
+    if (options.isTrusted) {
+        allowedSchemes.push(Schemas.command);
+    }
+    return {
+        config: {
+            // allowedTags should included everything that markdown renders to.
+            // Since we have our own sanitize function for marked, it's possible we missed some tag so let dompurify make sure.
+            // HTML tags that can result from markdown are from reading https://spec.commonmark.org/0.29/
+            // HTML table tags that can result from markdown are from https://github.github.com/gfm/#tables-extension-
+            ALLOWED_TAGS: ['ul', 'li', 'p', 'b', 'i', 'code', 'blockquote', 'ol', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'em', 'pre', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'div', 'del', 'a', 'strong', 'br', 'img', 'span'],
+            ALLOWED_ATTR: ['href', 'data-href', 'target', 'title', 'src', 'alt', 'class', 'style', 'data-code', 'width', 'height', 'align'],
+            ALLOW_UNKNOWN_PROTOCOLS: true,
+        },
+        allowedSchemes
+    };
 }

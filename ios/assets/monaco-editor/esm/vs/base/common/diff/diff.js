@@ -61,7 +61,7 @@ export class MyArray {
  * A utility class which helps to create the set of DiffChanges from
  * a difference operation. This class accepts original DiffElements and
  * modified DiffElements that are involved in a particular change. The
- * MarktNextChange() method can be called to mark the separation between
+ * MarkNextChange() method can be called to mark the separation between
  * distinct changes. At the end, the Changes property can be called to retrieve
  * the constructed changes.
  */
@@ -149,6 +149,8 @@ export class LcsDiff {
      */
     constructor(originalSequence, modifiedSequence, continueProcessingPredicate = null) {
         this.ContinueProcessingPredicate = continueProcessingPredicate;
+        this._originalSequence = originalSequence;
+        this._modifiedSequence = modifiedSequence;
         const [originalStringElements, originalElementsOrHash, originalHasStrings] = LcsDiff._getElements(originalSequence);
         const [modifiedStringElements, modifiedElementsOrHash, modifiedHasStrings] = LcsDiff._getElements(modifiedSequence);
         this._hasStrings = (originalHasStrings && modifiedHasStrings);
@@ -181,6 +183,20 @@ export class LcsDiff {
             return false;
         }
         return (this._hasStrings ? this._originalStringElements[originalIndex] === this._modifiedStringElements[newIndex] : true);
+    }
+    ElementsAreStrictEqual(originalIndex, newIndex) {
+        if (!this.ElementsAreEqual(originalIndex, newIndex)) {
+            return false;
+        }
+        const originalElement = LcsDiff._getStrictElement(this._originalSequence, originalIndex);
+        const modifiedElement = LcsDiff._getStrictElement(this._modifiedSequence, newIndex);
+        return (originalElement === modifiedElement);
+    }
+    static _getStrictElement(sequence, index) {
+        if (typeof sequence.getStrictElement === 'function') {
+            return sequence.getStrictElement(index);
+        }
+        return null;
     }
     OriginalElementsAreEqual(index1, index2) {
         if (this._originalElementsOrHash[index1] !== this._originalElementsOrHash[index2]) {
@@ -280,7 +296,7 @@ export class LcsDiff {
                 rightChanges = this.ComputeDiffRecursive(midOriginal + 1, originalEnd, midModified + 1, modifiedEnd, quitEarlyArr);
             }
             else {
-                // We did't have time to finish the first half, so we don't have time to compute this half.
+                // We didn't have time to finish the first half, so we don't have time to compute this half.
                 // Consider the entire rest of the sequence different.
                 rightChanges = [
                     new DiffChange(midOriginal + 1, originalEnd - (midOriginal + 1) + 1, midModified + 1, modifiedEnd - (midModified + 1) + 1)
@@ -531,7 +547,7 @@ export class LcsDiff {
                 }
                 else {
                     // We didn't actually remember enough of the history.
-                    //Since we are quiting the diff early, we need to shift back the originalStart and modified start
+                    //Since we are quitting the diff early, we need to shift back the originalStart and modified start
                     //back into the boundary limits since we decremented their value above beyond the boundary limit.
                     originalStart++;
                     modifiedStart++;
@@ -616,10 +632,16 @@ export class LcsDiff {
             const modifiedStop = (i < changes.length - 1) ? changes[i + 1].modifiedStart : this._modifiedElementsOrHash.length;
             const checkOriginal = change.originalLength > 0;
             const checkModified = change.modifiedLength > 0;
-            while (change.originalStart + change.originalLength < originalStop &&
-                change.modifiedStart + change.modifiedLength < modifiedStop &&
-                (!checkOriginal || this.OriginalElementsAreEqual(change.originalStart, change.originalStart + change.originalLength)) &&
-                (!checkModified || this.ModifiedElementsAreEqual(change.modifiedStart, change.modifiedStart + change.modifiedLength))) {
+            while (change.originalStart + change.originalLength < originalStop
+                && change.modifiedStart + change.modifiedLength < modifiedStop
+                && (!checkOriginal || this.OriginalElementsAreEqual(change.originalStart, change.originalStart + change.originalLength))
+                && (!checkModified || this.ModifiedElementsAreEqual(change.modifiedStart, change.modifiedStart + change.modifiedLength))) {
+                const startStrictEqual = this.ElementsAreStrictEqual(change.originalStart, change.modifiedStart);
+                const endStrictEqual = this.ElementsAreStrictEqual(change.originalStart + change.originalLength, change.modifiedStart + change.modifiedLength);
+                if (endStrictEqual && !startStrictEqual) {
+                    // moving the change down would create an equal change, but the elements are not strict equal
+                    break;
+                }
                 change.originalStart++;
                 change.modifiedStart++;
             }
@@ -638,12 +660,8 @@ export class LcsDiff {
             let modifiedStop = 0;
             if (i > 0) {
                 const prevChange = changes[i - 1];
-                if (prevChange.originalLength > 0) {
-                    originalStop = prevChange.originalStart + prevChange.originalLength;
-                }
-                if (prevChange.modifiedLength > 0) {
-                    modifiedStop = prevChange.modifiedStart + prevChange.modifiedLength;
-                }
+                originalStop = prevChange.originalStart + prevChange.originalLength;
+                modifiedStop = prevChange.modifiedStart + prevChange.modifiedLength;
             }
             const checkOriginal = change.originalLength > 0;
             const checkModified = change.modifiedLength > 0;
@@ -661,7 +679,9 @@ export class LcsDiff {
                 if (checkModified && !this.ModifiedElementsAreEqual(modifiedStart, modifiedStart + change.modifiedLength)) {
                     break;
                 }
-                const score = this._boundaryScore(originalStart, change.originalLength, modifiedStart, change.modifiedLength);
+                const touchingPreviousChange = (originalStart === originalStop && modifiedStart === modifiedStop);
+                const score = ((touchingPreviousChange ? 5 : 0)
+                    + this._boundaryScore(originalStart, change.originalLength, modifiedStart, change.modifiedLength));
                 if (score > bestScore) {
                     bestScore = score;
                     bestDelta = delta;
@@ -669,8 +689,80 @@ export class LcsDiff {
             }
             change.originalStart -= bestDelta;
             change.modifiedStart -= bestDelta;
+            const mergedChangeArr = [null];
+            if (i > 0 && this.ChangesOverlap(changes[i - 1], changes[i], mergedChangeArr)) {
+                changes[i - 1] = mergedChangeArr[0];
+                changes.splice(i, 1);
+                i++;
+                continue;
+            }
+        }
+        // There could be multiple longest common substrings.
+        // Give preference to the ones containing longer lines
+        if (this._hasStrings) {
+            for (let i = 1, len = changes.length; i < len; i++) {
+                const aChange = changes[i - 1];
+                const bChange = changes[i];
+                const matchedLength = bChange.originalStart - aChange.originalStart - aChange.originalLength;
+                const aOriginalStart = aChange.originalStart;
+                const bOriginalEnd = bChange.originalStart + bChange.originalLength;
+                const abOriginalLength = bOriginalEnd - aOriginalStart;
+                const aModifiedStart = aChange.modifiedStart;
+                const bModifiedEnd = bChange.modifiedStart + bChange.modifiedLength;
+                const abModifiedLength = bModifiedEnd - aModifiedStart;
+                // Avoid wasting a lot of time with these searches
+                if (matchedLength < 5 && abOriginalLength < 20 && abModifiedLength < 20) {
+                    const t = this._findBetterContiguousSequence(aOriginalStart, abOriginalLength, aModifiedStart, abModifiedLength, matchedLength);
+                    if (t) {
+                        const [originalMatchStart, modifiedMatchStart] = t;
+                        if (originalMatchStart !== aChange.originalStart + aChange.originalLength || modifiedMatchStart !== aChange.modifiedStart + aChange.modifiedLength) {
+                            // switch to another sequence that has a better score
+                            aChange.originalLength = originalMatchStart - aChange.originalStart;
+                            aChange.modifiedLength = modifiedMatchStart - aChange.modifiedStart;
+                            bChange.originalStart = originalMatchStart + matchedLength;
+                            bChange.modifiedStart = modifiedMatchStart + matchedLength;
+                            bChange.originalLength = bOriginalEnd - bChange.originalStart;
+                            bChange.modifiedLength = bModifiedEnd - bChange.modifiedStart;
+                        }
+                    }
+                }
+            }
         }
         return changes;
+    }
+    _findBetterContiguousSequence(originalStart, originalLength, modifiedStart, modifiedLength, desiredLength) {
+        if (originalLength < desiredLength || modifiedLength < desiredLength) {
+            return null;
+        }
+        const originalMax = originalStart + originalLength - desiredLength + 1;
+        const modifiedMax = modifiedStart + modifiedLength - desiredLength + 1;
+        let bestScore = 0;
+        let bestOriginalStart = 0;
+        let bestModifiedStart = 0;
+        for (let i = originalStart; i < originalMax; i++) {
+            for (let j = modifiedStart; j < modifiedMax; j++) {
+                const score = this._contiguousSequenceScore(i, j, desiredLength);
+                if (score > 0 && score > bestScore) {
+                    bestScore = score;
+                    bestOriginalStart = i;
+                    bestModifiedStart = j;
+                }
+            }
+        }
+        if (bestScore > 0) {
+            return [bestOriginalStart, bestModifiedStart];
+        }
+        return null;
+    }
+    _contiguousSequenceScore(originalStart, modifiedStart, length) {
+        let score = 0;
+        for (let l = 0; l < length; l++) {
+            if (!this.ElementsAreEqual(originalStart + l, modifiedStart + l)) {
+                return 0;
+            }
+            score += this._originalStringElements[originalStart + l].length;
+        }
+        return score;
     }
     _OriginalIsBoundary(index) {
         if (index <= 0 || index >= this._originalElementsOrHash.length - 1) {

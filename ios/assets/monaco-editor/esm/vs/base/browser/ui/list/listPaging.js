@@ -2,12 +2,12 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-import './list.css';
-import { Disposable } from '../../../common/lifecycle.js';
 import { range } from '../../../common/arrays.js';
-import { List } from './listWidget.js';
-import { Event } from '../../../common/event.js';
 import { CancellationTokenSource } from '../../../common/cancellation.js';
+import { Event } from '../../../common/event.js';
+import { Disposable } from '../../../common/lifecycle.js';
+import './list.css';
+import { List } from './listWidget.js';
 class PagedRenderer {
     constructor(renderer, modelProvider) {
         this.renderer = renderer;
@@ -89,9 +89,6 @@ export class PagedList {
     get onPointer() {
         return Event.map(this.list.onPointer, ({ element, index, browserEvent }) => ({ element: element === undefined ? undefined : this._model.get(element), index, browserEvent }));
     }
-    get onDidChangeFocus() {
-        return Event.map(this.list.onDidChangeFocus, ({ elements, indexes, browserEvent }) => ({ elements: elements.map(e => this._model.get(e)), indexes, browserEvent }));
-    }
     get onDidChangeSelection() {
         return Event.map(this.list.onDidChangeSelection, ({ elements, indexes, browserEvent }) => ({ elements: elements.map(e => this._model.get(e)), indexes, browserEvent }));
     }
@@ -105,11 +102,11 @@ export class PagedList {
     getFocus() {
         return this.list.getFocus();
     }
-    setSelection(indexes, browserEvent) {
-        this.list.setSelection(indexes, browserEvent);
-    }
     getSelection() {
         return this.list.getSelection();
+    }
+    getSelectedElements() {
+        return this.getSelection().map(i => this.model.get(i));
     }
     style(styles) {
         this.list.style(styles);

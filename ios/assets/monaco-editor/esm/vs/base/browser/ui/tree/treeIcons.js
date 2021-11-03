@@ -2,9 +2,9 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-import { Codicon, registerIcon } from '../../../common/codicons.js';
-export const treeItemExpandedIcon = registerIcon('tree-item-expanded', Codicon.chevronDown); // collapsed is done with rotation
-export const treeFilterOnTypeOnIcon = registerIcon('tree-filter-on-type-on', Codicon.listFilter);
-export const treeFilterOnTypeOffIcon = registerIcon('tree-filter-on-type-off', Codicon.listSelection);
-export const treeFilterClearIcon = registerIcon('tree-filter-clear', Codicon.close);
-export const treeItemLoadingIcon = registerIcon('tree-item-loading', Codicon.loading);
+import { Codicon, registerCodicon } from '../../../common/codicons.js';
+export const treeItemExpandedIcon = registerCodicon('tree-item-expanded', Codicon.chevronDown); // collapsed is done with rotation
+export const treeFilterOnTypeOnIcon = registerCodicon('tree-filter-on-type-on', Codicon.listFilter);
+export const treeFilterOnTypeOffIcon = registerCodicon('tree-filter-on-type-off', Codicon.listSelection);
+export const treeFilterClearIcon = registerCodicon('tree-filter-clear', Codicon.close);
+export const treeItemLoadingIcon = registerCodicon('tree-item-loading', Codicon.loading);

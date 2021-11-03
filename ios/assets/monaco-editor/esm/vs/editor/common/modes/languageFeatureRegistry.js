@@ -3,7 +3,10 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 import { Emitter } from '../../../base/common/event.js';
+import { doHash } from '../../../base/common/hash.js';
 import { toDisposable } from '../../../base/common/lifecycle.js';
+import { LRUCache } from '../../../base/common/map.js';
+import { MovingAverage } from '../../../base/common/numbers.js';
 import { score } from './languageSelector.js';
 import { shouldSynchronizeModel } from '../services/modelService.js';
 function isExclusive(selector) {
@@ -14,7 +17,7 @@ function isExclusive(selector) {
         return selector.every(isExclusive);
     }
     else {
-        return !!selector.exclusive;
+        return !!selector.exclusive; // TODO: microsoft/TypeScript#42768
     }
 }
 export class LanguageFeatureRegistry {
@@ -140,5 +143,53 @@ export class LanguageFeatureRegistry {
         else {
             return 0;
         }
+    }
+}
+const _hashes = new WeakMap();
+let pool = 0;
+function weakHash(obj) {
+    let value = _hashes.get(obj);
+    if (value === undefined) {
+        value = ++pool;
+        _hashes.set(obj, value);
+    }
+    return value;
+}
+/**
+ * Keeps moving average per model and set of providers so that requests
+ * can be debounce according to the provider performance
+ */
+export class LanguageFeatureRequestDelays {
+    constructor(_registry, min, max = Number.MAX_SAFE_INTEGER) {
+        this._registry = _registry;
+        this.min = min;
+        this.max = max;
+        this._cache = new LRUCache(50, 0.7);
+    }
+    _key(model) {
+        return model.id + this._registry.all(model).reduce((hashVal, obj) => doHash(weakHash(obj), hashVal), 0);
+    }
+    _clamp(value) {
+        if (value === undefined) {
+            return this.min;
+        }
+        else {
+            return Math.min(this.max, Math.max(this.min, Math.floor(value * 1.3)));
+        }
+    }
+    get(model) {
+        const key = this._key(model);
+        const avg = this._cache.get(key);
+        return this._clamp(avg === null || avg === void 0 ? void 0 : avg.value);
+    }
+    update(model, value) {
+        const key = this._key(model);
+        let avg = this._cache.get(key);
+        if (!avg) {
+            avg = new MovingAverage();
+            this._cache.set(key, avg);
+        }
+        avg.update(value);
+        return this.get(model);
     }
 }

@@ -4,6 +4,11 @@
  *--------------------------------------------------------------------------------------------*/
 import * as buffer from '../../../base/common/buffer.js';
 import { decodeUTF16LE } from '../core/stringBuilder.js';
+function escapeNewLine(str) {
+    return (str
+        .replace(/\n/g, '\\n')
+        .replace(/\r/g, '\\r'));
+}
 export class TextChange {
     constructor(oldPosition, oldText, newPosition, newText) {
         this.oldPosition = oldPosition;
@@ -25,12 +30,12 @@ export class TextChange {
     }
     toString() {
         if (this.oldText.length === 0) {
-            return `(insert@${this.oldPosition} "${this.newText}")`;
+            return `(insert@${this.oldPosition} "${escapeNewLine(this.newText)}")`;
         }
         if (this.newText.length === 0) {
-            return `(delete@${this.oldPosition} "${this.oldText}")`;
+            return `(delete@${this.oldPosition} "${escapeNewLine(this.oldText)}")`;
         }
-        return `(replace@${this.oldPosition} "${this.oldText}" with "${this.newText}")`;
+        return `(replace@${this.oldPosition} "${escapeNewLine(this.oldText)}" with "${escapeNewLine(this.newText)}")`;
     }
     static _writeStringSize(str) {
         return (4 + 2 * str.length);

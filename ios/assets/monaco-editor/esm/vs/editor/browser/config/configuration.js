@@ -9,7 +9,7 @@ import * as platform from '../../../base/common/platform.js';
 import { CharWidthRequest, readCharWidths } from './charWidthReader.js';
 import { ElementSizeObserver } from './elementSizeObserver.js';
 import { CommonEditorConfiguration } from '../../common/config/commonEditorConfig.js';
-import { EditorFontLigatures } from '../../common/config/editorOptions.js';
+import { EditorFontLigatures, EDITOR_FONT_DEFAULTS } from '../../common/config/editorOptions.js';
 import { FontInfo } from '../../common/config/fontInfo.js';
 class CSSBasedConfigurationCache {
     constructor() {
@@ -73,8 +73,7 @@ class CSSBasedConfiguration extends Disposable {
     _evictUntrustedReadings() {
         const values = this._cache.getValues();
         let somethingRemoved = false;
-        for (let i = 0, len = values.length; i < len; i++) {
-            const item = values[i];
+        for (const item of values) {
             if (!item.isTrusted) {
                 somethingRemoved = true;
                 this._cache.remove(item);
@@ -91,6 +90,7 @@ class CSSBasedConfiguration extends Disposable {
                 // Hey, it's Bug 14341 ... we couldn't read
                 readConfig = new FontInfo({
                     zoomLevel: browser.getZoomLevel(),
+                    pixelRatio: browser.getPixelRatio(),
                     fontFamily: readConfig.fontFamily,
                     fontWeight: readConfig.fontWeight,
                     fontSize: readConfig.fontSize,
@@ -188,6 +188,7 @@ class CSSBasedConfiguration extends Disposable {
         const canTrustBrowserZoomLevel = (browser.getTimeSinceLastZoomLevelChanged() > 2000);
         return new FontInfo({
             zoomLevel: browser.getZoomLevel(),
+            pixelRatio: browser.getPixelRatio(),
             fontFamily: bareFontInfo.fontFamily,
             fontWeight: bareFontInfo.fontWeight,
             fontSize: bareFontInfo.fontSize,
@@ -210,9 +211,9 @@ export class Configuration extends CommonEditorConfiguration {
     constructor(isSimpleWidget, options, referenceDomElement = null, accessibilityService) {
         super(isSimpleWidget, options);
         this.accessibilityService = accessibilityService;
-        this._elementSizeObserver = this._register(new ElementSizeObserver(referenceDomElement, options.dimension, () => this._onReferenceDomElementSizeChanged()));
-        this._register(CSSBasedConfiguration.INSTANCE.onDidChange(() => this._onCSSBasedConfigurationChanged()));
-        if (this._validatedOptions.get(9 /* automaticLayout */)) {
+        this._elementSizeObserver = this._register(new ElementSizeObserver(referenceDomElement, options.dimension, () => this._recomputeOptions()));
+        this._register(CSSBasedConfiguration.INSTANCE.onDidChange(() => this._recomputeOptions()));
+        if (this._validatedOptions.get(10 /* automaticLayout */)) {
             this._elementSizeObserver.startObserving();
         }
         this._register(browser.onDidChangeZoomLevel(_ => this._recomputeOptions()));
@@ -220,7 +221,7 @@ export class Configuration extends CommonEditorConfiguration {
         this._recomputeOptions();
     }
     static applyFontInfoSlow(domNode, fontInfo) {
-        domNode.style.fontFamily = fontInfo.getMassagedFontFamily();
+        domNode.style.fontFamily = fontInfo.getMassagedFontFamily(browser.isSafari ? EDITOR_FONT_DEFAULTS.fontFamily : null);
         domNode.style.fontWeight = fontInfo.fontWeight;
         domNode.style.fontSize = fontInfo.fontSize + 'px';
         domNode.style.fontFeatureSettings = fontInfo.fontFeatureSettings;
@@ -228,30 +229,28 @@ export class Configuration extends CommonEditorConfiguration {
         domNode.style.letterSpacing = fontInfo.letterSpacing + 'px';
     }
     static applyFontInfo(domNode, fontInfo) {
-        domNode.setFontFamily(fontInfo.getMassagedFontFamily());
+        domNode.setFontFamily(fontInfo.getMassagedFontFamily(browser.isSafari ? EDITOR_FONT_DEFAULTS.fontFamily : null));
         domNode.setFontWeight(fontInfo.fontWeight);
         domNode.setFontSize(fontInfo.fontSize);
         domNode.setFontFeatureSettings(fontInfo.fontFeatureSettings);
         domNode.setLineHeight(fontInfo.lineHeight);
         domNode.setLetterSpacing(fontInfo.letterSpacing);
     }
-    _onReferenceDomElementSizeChanged() {
-        this._recomputeOptions();
-    }
-    _onCSSBasedConfigurationChanged() {
-        this._recomputeOptions();
-    }
     observeReferenceElement(dimension) {
         this._elementSizeObserver.observe(dimension);
     }
-    dispose() {
-        super.dispose();
+    updatePixelRatio() {
+        this._recomputeOptions();
     }
-    _getExtraEditorClassName() {
+    static _getExtraEditorClassName() {
         let extra = '';
         if (!browser.isSafari && !browser.isWebkitWebView) {
             // Use user-select: none in all browsers except Safari and native macOS WebView
             extra += 'no-user-select ';
+        }
+        if (browser.isSafari) {
+            // See https://github.com/microsoft/vscode/issues/108822
+            extra += 'no-minimap-shadow ';
         }
         if (platform.isMacintosh) {
             extra += 'mac ';
@@ -260,7 +259,7 @@ export class Configuration extends CommonEditorConfiguration {
     }
     _getEnvConfiguration() {
         return {
-            extraEditorClassName: this._getExtraEditorClassName(),
+            extraEditorClassName: Configuration._getExtraEditorClassName(),
             outerWidth: this._elementSizeObserver.getWidth(),
             outerHeight: this._elementSizeObserver.getHeight(),
             emptySelectionClipboard: browser.isWebKit || browser.isFirefox,

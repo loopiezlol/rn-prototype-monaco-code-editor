@@ -8,25 +8,35 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
     else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
     return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
-import './list.css';
-import { dispose, DisposableStore } from '../../../common/lifecycle.js';
-import { isNumber } from '../../../common/types.js';
-import { range, firstIndex, binarySearch } from '../../../common/arrays.js';
-import { memoize } from '../../../common/decorators.js';
-import * as DOM from '../../dom.js';
-import * as platform from '../../../common/platform.js';
-import { Gesture } from '../../touch.js';
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
+import { createStyleSheet } from '../../dom.js';
+import { DomEmitter, stopEvent } from '../../event.js';
 import { StandardKeyboardEvent } from '../../keyboardEvent.js';
-import { Event, Emitter, EventBufferer } from '../../../common/event.js';
-import { domEvent } from '../../event.js';
+import { Gesture } from '../../touch.js';
+import { alert } from '../aria/aria.js';
+import { CombinedSpliceable } from './splice.js';
+import { binarySearch, firstOrDefault, range } from '../../../common/arrays.js';
+import { timeout } from '../../../common/async.js';
+import { Color } from '../../../common/color.js';
+import { memoize } from '../../../common/decorators.js';
+import { Emitter, Event, EventBufferer } from '../../../common/event.js';
+import { matchesPrefix } from '../../../common/filters.js';
+import { DisposableStore, dispose } from '../../../common/lifecycle.js';
+import { clamp } from '../../../common/numbers.js';
+import { mixin } from '../../../common/objects.js';
+import * as platform from '../../../common/platform.js';
+import { isNumber } from '../../../common/types.js';
+import './list.css';
 import { ListError } from './list.js';
 import { ListView } from './listView.js';
-import { Color } from '../../../common/color.js';
-import { mixin } from '../../../common/objects.js';
-import { CombinedSpliceable } from './splice.js';
-import { clamp } from '../../../common/numbers.js';
-import { matchesPrefix } from '../../../common/filters.js';
-import { alert } from '../aria/aria.js';
 class TraitRenderer {
     constructor(trait) {
         this.trait = trait;
@@ -39,7 +49,7 @@ class TraitRenderer {
         return container;
     }
     renderElement(element, index, templateData) {
-        const renderedElementIndex = firstIndex(this.renderedElements, el => el.templateData === templateData);
+        const renderedElementIndex = this.renderedElements.findIndex(el => el.templateData === templateData);
         if (renderedElementIndex >= 0) {
             const rendered = this.renderedElements[renderedElementIndex];
             this.trait.unrender(templateData);
@@ -74,7 +84,7 @@ class TraitRenderer {
         }
     }
     disposeTemplate(templateData) {
-        const index = firstIndex(this.renderedElements, el => el.templateData === templateData);
+        const index = this.renderedElements.findIndex(el => el.templateData === templateData);
         if (index < 0) {
             return;
         }
@@ -84,6 +94,7 @@ class TraitRenderer {
 class Trait {
     constructor(_trait) {
         this._trait = _trait;
+        this.length = 0;
         this.indexes = [];
         this.sortedIndexes = [];
         this._onChange = new Emitter();
@@ -94,21 +105,29 @@ class Trait {
         return new TraitRenderer(this);
     }
     splice(start, deleteCount, elements) {
+        var _a;
+        deleteCount = Math.max(0, Math.min(deleteCount, this.length - start));
         const diff = elements.length - deleteCount;
         const end = start + deleteCount;
-        const indexes = [
+        const sortedIndexes = [
             ...this.sortedIndexes.filter(i => i < start),
             ...elements.map((hasTrait, i) => hasTrait ? i + start : -1).filter(i => i !== -1),
             ...this.sortedIndexes.filter(i => i >= end).map(i => i + diff)
         ];
+        const length = this.length + diff;
+        if (this.sortedIndexes.length > 0 && sortedIndexes.length === 0 && length > 0) {
+            const first = (_a = this.sortedIndexes.find(index => index >= start)) !== null && _a !== void 0 ? _a : length - 1;
+            sortedIndexes.push(Math.min(first, length - 1));
+        }
         this.renderer.splice(start, deleteCount, elements.length);
-        this._set(indexes, indexes);
+        this._set(sortedIndexes, sortedIndexes);
+        this.length = length;
     }
     renderIndex(index, container) {
-        DOM.toggleClass(container, this._trait, this.contains(index));
+        container.classList.toggle(this._trait, this.contains(index));
     }
     unrender(container) {
-        DOM.removeClass(container, this._trait);
+        container.classList.remove(this._trait);
     }
     /**
      * Sets the indexes which should have this trait.
@@ -183,10 +202,10 @@ export function isInputElement(e) {
     return e.tagName === 'INPUT' || e.tagName === 'TEXTAREA';
 }
 export function isMonacoEditor(e) {
-    if (DOM.hasClass(e, 'monaco-editor')) {
+    if (e.classList.contains('monaco-editor')) {
         return true;
     }
-    if (DOM.hasClass(e, 'monaco-list')) {
+    if (e.classList.contains('monaco-list')) {
         return false;
     }
     if (!e.parentElement) {
@@ -199,18 +218,28 @@ class KeyboardController {
         this.list = list;
         this.view = view;
         this.disposables = new DisposableStore();
-        const multipleSelectionSupport = options.multipleSelectionSupport !== false;
-        const onKeyDown = Event.chain(domEvent(view.domNode, 'keydown'))
+        this.multipleSelectionDisposables = new DisposableStore();
+        this.onKeyDown.filter(e => e.keyCode === 3 /* Enter */).on(this.onEnter, this, this.disposables);
+        this.onKeyDown.filter(e => e.keyCode === 16 /* UpArrow */).on(this.onUpArrow, this, this.disposables);
+        this.onKeyDown.filter(e => e.keyCode === 18 /* DownArrow */).on(this.onDownArrow, this, this.disposables);
+        this.onKeyDown.filter(e => e.keyCode === 11 /* PageUp */).on(this.onPageUpArrow, this, this.disposables);
+        this.onKeyDown.filter(e => e.keyCode === 12 /* PageDown */).on(this.onPageDownArrow, this, this.disposables);
+        this.onKeyDown.filter(e => e.keyCode === 9 /* Escape */).on(this.onEscape, this, this.disposables);
+        if (options.multipleSelectionSupport !== false) {
+            this.onKeyDown.filter(e => (platform.isMacintosh ? e.metaKey : e.ctrlKey) && e.keyCode === 31 /* KEY_A */).on(this.onCtrlA, this, this.multipleSelectionDisposables);
+        }
+    }
+    get onKeyDown() {
+        return Event.chain(this.disposables.add(new DomEmitter(this.view.domNode, 'keydown')).event)
             .filter(e => !isInputElement(e.target))
             .map(e => new StandardKeyboardEvent(e));
-        onKeyDown.filter(e => e.keyCode === 3 /* Enter */).on(this.onEnter, this, this.disposables);
-        onKeyDown.filter(e => e.keyCode === 16 /* UpArrow */).on(this.onUpArrow, this, this.disposables);
-        onKeyDown.filter(e => e.keyCode === 18 /* DownArrow */).on(this.onDownArrow, this, this.disposables);
-        onKeyDown.filter(e => e.keyCode === 11 /* PageUp */).on(this.onPageUpArrow, this, this.disposables);
-        onKeyDown.filter(e => e.keyCode === 12 /* PageDown */).on(this.onPageDownArrow, this, this.disposables);
-        onKeyDown.filter(e => e.keyCode === 9 /* Escape */).on(this.onEscape, this, this.disposables);
-        if (multipleSelectionSupport) {
-            onKeyDown.filter(e => (platform.isMacintosh ? e.metaKey : e.ctrlKey) && e.keyCode === 31 /* KEY_A */).on(this.onCtrlA, this, this.disposables);
+    }
+    updateOptions(optionsUpdate) {
+        if (optionsUpdate.multipleSelectionSupport !== undefined) {
+            this.multipleSelectionDisposables.clear();
+            if (optionsUpdate.multipleSelectionSupport) {
+                this.onKeyDown.filter(e => (platform.isMacintosh ? e.metaKey : e.ctrlKey) && e.keyCode === 31 /* KEY_A */).on(this.onCtrlA, this, this.multipleSelectionDisposables);
+            }
         }
     }
     onEnter(e) {
@@ -222,46 +251,62 @@ class KeyboardController {
         e.preventDefault();
         e.stopPropagation();
         this.list.focusPrevious(1, false, e.browserEvent);
-        this.list.reveal(this.list.getFocus()[0]);
+        const el = this.list.getFocus()[0];
+        this.list.setAnchor(el);
+        this.list.reveal(el);
         this.view.domNode.focus();
     }
     onDownArrow(e) {
         e.preventDefault();
         e.stopPropagation();
         this.list.focusNext(1, false, e.browserEvent);
-        this.list.reveal(this.list.getFocus()[0]);
+        const el = this.list.getFocus()[0];
+        this.list.setAnchor(el);
+        this.list.reveal(el);
         this.view.domNode.focus();
     }
     onPageUpArrow(e) {
         e.preventDefault();
         e.stopPropagation();
         this.list.focusPreviousPage(e.browserEvent);
-        this.list.reveal(this.list.getFocus()[0]);
+        const el = this.list.getFocus()[0];
+        this.list.setAnchor(el);
+        this.list.reveal(el);
         this.view.domNode.focus();
     }
     onPageDownArrow(e) {
         e.preventDefault();
         e.stopPropagation();
         this.list.focusNextPage(e.browserEvent);
-        this.list.reveal(this.list.getFocus()[0]);
+        const el = this.list.getFocus()[0];
+        this.list.setAnchor(el);
+        this.list.reveal(el);
         this.view.domNode.focus();
     }
     onCtrlA(e) {
         e.preventDefault();
         e.stopPropagation();
         this.list.setSelection(range(this.list.length), e.browserEvent);
+        this.list.setAnchor(undefined);
         this.view.domNode.focus();
     }
     onEscape(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        this.list.setSelection([], e.browserEvent);
-        this.view.domNode.focus();
+        if (this.list.getSelection().length) {
+            e.preventDefault();
+            e.stopPropagation();
+            this.list.setSelection([], e.browserEvent);
+            this.list.setAnchor(undefined);
+            this.view.domNode.focus();
+        }
     }
     dispose() {
         this.disposables.dispose();
+        this.multipleSelectionDisposables.dispose();
     }
 }
+__decorate([
+    memoize
+], KeyboardController.prototype, "onKeyDown", null);
 var TypeLabelControllerState;
 (function (TypeLabelControllerState) {
     TypeLabelControllerState[TypeLabelControllerState["Idle"] = 0] = "Idle";
@@ -309,7 +354,7 @@ class TypeLabelController {
         if (this.enabled) {
             return;
         }
-        const onChar = Event.chain(domEvent(this.view.domNode, 'keydown'))
+        const onChar = Event.chain(this.enabledDisposables.add(new DomEmitter(this.view.domNode, 'keydown')).event)
             .filter(e => !isInputElement(e.target))
             .filter(() => this.automaticKeyboardNavigation || this.triggered)
             .map(event => new StandardKeyboardEvent(event))
@@ -336,7 +381,7 @@ class TypeLabelController {
         var _a;
         const focus = this.list.getFocus();
         if (focus.length > 0 && focus[0] === this.previouslyFocused) {
-            // List: re-anounce element on typing end since typed keys will interupt aria label of focused element
+            // List: re-announce element on typing end since typed keys will interrupt aria label of focused element
             // Do not announce if there was a focus change at the end to prevent duplication https://github.com/microsoft/vscode/issues/95961
             const ariaLabel = (_a = this.list.options.accessibilityProvider) === null || _a === void 0 ? void 0 : _a.getAriaLabel(this.list.element(focus[0]));
             if (ariaLabel) {
@@ -378,7 +423,7 @@ class DOMFocusController {
         this.list = list;
         this.view = view;
         this.disposables = new DisposableStore();
-        const onKeyDown = Event.chain(domEvent(view.domNode, 'keydown'))
+        const onKeyDown = Event.chain(this.disposables.add(new DomEmitter(view.domNode, 'keydown')).event)
             .filter(e => !isInputElement(e.target))
             .map(e => new StandardKeyboardEvent(e));
         onKeyDown.filter(e => e.keyCode === 2 /* Tab */ && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey)
@@ -431,9 +476,8 @@ export class MouseController {
         this.disposables = new DisposableStore();
         this._onPointer = new Emitter();
         this.onPointer = this._onPointer.event;
-        this.multipleSelectionSupport = !(list.options.multipleSelectionSupport === false);
-        if (this.multipleSelectionSupport) {
-            this.multipleSelectionController = list.options.multipleSelectionController || DefaultMultipleSelectionController;
+        if (list.options.multipleSelectionSupport !== false) {
+            this.multipleSelectionController = this.list.options.multipleSelectionController || DefaultMultipleSelectionController;
         }
         this.mouseSupport = typeof list.options.mouseSupport === 'undefined' || !!list.options.mouseSupport;
         if (this.mouseSupport) {
@@ -445,17 +489,25 @@ export class MouseController {
         }
         Event.any(list.onMouseClick, list.onMouseMiddleClick, list.onTap)(this.onViewPointer, this, this.disposables);
     }
-    isSelectionSingleChangeEvent(event) {
-        if (this.multipleSelectionController) {
-            return this.multipleSelectionController.isSelectionSingleChangeEvent(event);
+    updateOptions(optionsUpdate) {
+        if (optionsUpdate.multipleSelectionSupport !== undefined) {
+            this.multipleSelectionController = undefined;
+            if (optionsUpdate.multipleSelectionSupport) {
+                this.multipleSelectionController = this.list.options.multipleSelectionController || DefaultMultipleSelectionController;
+            }
         }
-        return platform.isMacintosh ? event.browserEvent.metaKey : event.browserEvent.ctrlKey;
+    }
+    isSelectionSingleChangeEvent(event) {
+        if (!this.multipleSelectionController) {
+            return false;
+        }
+        return this.multipleSelectionController.isSelectionSingleChangeEvent(event);
     }
     isSelectionRangeChangeEvent(event) {
-        if (this.multipleSelectionController) {
-            return this.multipleSelectionController.isSelectionRangeChangeEvent(event);
+        if (!this.multipleSelectionController) {
+            return false;
         }
-        return event.browserEvent.shiftKey;
+        return this.multipleSelectionController.isSelectionRangeChangeEvent(event);
     }
     isSelectionChangeEvent(event) {
         return this.isSelectionSingleChangeEvent(event) || this.isSelectionRangeChangeEvent(event);
@@ -482,22 +534,21 @@ export class MouseController {
         if (isInputElement(e.browserEvent.target) || isMonacoEditor(e.browserEvent.target)) {
             return;
         }
-        let reference = this.list.getFocus()[0];
-        const selection = this.list.getSelection();
-        reference = reference === undefined ? selection[0] : reference;
         const focus = e.index;
         if (typeof focus === 'undefined') {
             this.list.setFocus([], e.browserEvent);
             this.list.setSelection([], e.browserEvent);
+            this.list.setAnchor(undefined);
             return;
         }
-        if (this.multipleSelectionSupport && this.isSelectionRangeChangeEvent(e)) {
-            return this.changeSelection(e, reference);
+        if (this.isSelectionRangeChangeEvent(e)) {
+            return this.changeSelection(e);
         }
-        if (this.multipleSelectionSupport && this.isSelectionChangeEvent(e)) {
-            return this.changeSelection(e, reference);
+        if (this.isSelectionChangeEvent(e)) {
+            return this.changeSelection(e);
         }
         this.list.setFocus([focus], e.browserEvent);
+        this.list.setAnchor(focus);
         if (!isMouseRightClick(e.browserEvent)) {
             this.list.setSelection([focus], e.browserEvent);
         }
@@ -507,30 +558,38 @@ export class MouseController {
         if (isInputElement(e.browserEvent.target) || isMonacoEditor(e.browserEvent.target)) {
             return;
         }
-        if (this.multipleSelectionSupport && this.isSelectionChangeEvent(e)) {
+        if (this.isSelectionChangeEvent(e)) {
             return;
         }
         const focus = this.list.getFocus();
         this.list.setSelection(focus, e.browserEvent);
     }
-    changeSelection(e, reference) {
+    changeSelection(e) {
         const focus = e.index;
-        if (this.isSelectionRangeChangeEvent(e) && reference !== undefined) {
-            const min = Math.min(reference, focus);
-            const max = Math.max(reference, focus);
+        let anchor = this.list.getAnchor();
+        if (this.isSelectionRangeChangeEvent(e)) {
+            if (typeof anchor === 'undefined') {
+                const currentFocus = this.list.getFocus()[0];
+                anchor = currentFocus !== null && currentFocus !== void 0 ? currentFocus : focus;
+                this.list.setAnchor(anchor);
+            }
+            const min = Math.min(anchor, focus);
+            const max = Math.max(anchor, focus);
             const rangeSelection = range(min, max + 1);
             const selection = this.list.getSelection();
-            const contiguousRange = getContiguousRangeContaining(disjunction(selection, [reference]), reference);
+            const contiguousRange = getContiguousRangeContaining(disjunction(selection, [anchor]), anchor);
             if (contiguousRange.length === 0) {
                 return;
             }
             const newSelection = disjunction(rangeSelection, relativeComplement(selection, contiguousRange));
             this.list.setSelection(newSelection, e.browserEvent);
+            this.list.setFocus([focus], e.browserEvent);
         }
         else if (this.isSelectionSingleChangeEvent(e)) {
             const selection = this.list.getSelection();
             const newSelection = selection.filter(i => i !== focus);
             this.list.setFocus([focus]);
+            this.list.setAnchor(focus);
             if (selection.length === newSelection.length) {
                 this.list.setSelection([...newSelection, focus], e.browserEvent);
             }
@@ -573,6 +632,9 @@ export class DefaultStyleController {
         if (styles.listActiveSelectionForeground) {
             content.push(`.monaco-list${suffix}:focus .monaco-list-row.selected { color: ${styles.listActiveSelectionForeground}; }`);
         }
+        if (styles.listActiveSelectionIconForeground) {
+            content.push(`.monaco-list${suffix}:focus .monaco-list-row.selected .codicon { color: ${styles.listActiveSelectionIconForeground}; }`);
+        }
         if (styles.listFocusAndSelectionBackground) {
             content.push(`
 				.monaco-drag-image,
@@ -584,6 +646,13 @@ export class DefaultStyleController {
 				.monaco-drag-image,
 				.monaco-list${suffix}:focus .monaco-list-row.selected.focused { color: ${styles.listFocusAndSelectionForeground}; }
 			`);
+        }
+        if (styles.listInactiveFocusForeground) {
+            content.push(`.monaco-list${suffix} .monaco-list-row.focused { color:  ${styles.listInactiveFocusForeground}; }`);
+            content.push(`.monaco-list${suffix} .monaco-list-row.focused:hover { color:  ${styles.listInactiveFocusForeground}; }`); // overwrite :hover style in this case!
+        }
+        if (styles.listInactiveSelectionIconForeground) {
+            content.push(`.monaco-list${suffix} .monaco-list-row.focused .codicon { color:  ${styles.listInactiveSelectionIconForeground}; }`);
         }
         if (styles.listInactiveFocusBackground) {
             content.push(`.monaco-list${suffix} .monaco-list-row.focused { background-color:  ${styles.listInactiveFocusBackground}; }`);
@@ -597,7 +666,7 @@ export class DefaultStyleController {
             content.push(`.monaco-list${suffix} .monaco-list-row.selected { color: ${styles.listInactiveSelectionForeground}; }`);
         }
         if (styles.listHoverBackground) {
-            content.push(`.monaco-list${suffix}:not(.drop-target) .monaco-list-row:hover:not(.selected):not(.focused) { background-color:  ${styles.listHoverBackground}; }`);
+            content.push(`.monaco-list${suffix}:not(.drop-target) .monaco-list-row:hover:not(.selected):not(.focused) { background-color: ${styles.listHoverBackground}; }`);
         }
         if (styles.listHoverForeground) {
             content.push(`.monaco-list${suffix} .monaco-list-row:hover:not(.selected):not(.focused) { color:  ${styles.listHoverForeground}; }`);
@@ -636,22 +705,29 @@ export class DefaultStyleController {
         if (styles.listMatchesShadow) {
             content.push(`.monaco-list-type-filter { box-shadow: 1px 1px 1px ${styles.listMatchesShadow}; }`);
         }
-        const newStyles = content.join('\n');
-        if (newStyles !== this.styleElement.innerHTML) {
-            this.styleElement.innerHTML = newStyles;
+        if (styles.tableColumnsBorder) {
+            content.push(`
+				.monaco-table:hover > .monaco-split-view2,
+				.monaco-table:hover > .monaco-split-view2 .monaco-sash.vertical::before {
+					border-color: ${styles.tableColumnsBorder};
+			}`);
         }
+        this.styleElement.textContent = content.join('\n');
     }
 }
 const defaultStyles = {
     listFocusBackground: Color.fromHex('#7FB0D0'),
     listActiveSelectionBackground: Color.fromHex('#0E639C'),
     listActiveSelectionForeground: Color.fromHex('#FFFFFF'),
+    listActiveSelectionIconForeground: Color.fromHex('#FFFFFF'),
     listFocusAndSelectionBackground: Color.fromHex('#094771'),
     listFocusAndSelectionForeground: Color.fromHex('#FFFFFF'),
     listInactiveSelectionBackground: Color.fromHex('#3F3F46'),
+    listInactiveSelectionIconForeground: Color.fromHex('#FFFFFF'),
     listHoverBackground: Color.fromHex('#2A2D2E'),
     listDropBackground: Color.fromHex('#383B3D'),
-    treeIndentGuidesStroke: Color.fromHex('#a9a9a9')
+    treeIndentGuidesStroke: Color.fromHex('#a9a9a9'),
+    tableColumnsBorder: Color.fromHex('#cccccc').transparent(0.2)
 };
 const DefaultOptions = {
     keyboardSupport: true,
@@ -828,6 +904,10 @@ class ListViewDragAndDrop {
     onDragOver(data, targetElement, targetIndex, originalEvent) {
         return this.dnd.onDragOver(data, targetElement, targetIndex, originalEvent);
     }
+    onDragLeave(data, targetElement, targetIndex, originalEvent) {
+        var _a, _b;
+        (_b = (_a = this.dnd).onDragLeave) === null || _b === void 0 ? void 0 : _b.call(_a, data, targetElement, targetIndex, originalEvent);
+    }
     onDragEnd(originalEvent) {
         if (this.dnd.onDragEnd) {
             this.dnd.onDragEnd(originalEvent);
@@ -842,15 +922,15 @@ export class List {
         var _a;
         this.user = user;
         this._options = _options;
+        this.focus = new Trait('focused');
+        this.anchor = new Trait('anchor');
         this.eventBufferer = new EventBufferer();
         this._ariaLabel = '';
         this.disposables = new DisposableStore();
-        this.didJustPressContextMenuKey = false;
         this._onDidDispose = new Emitter();
         this.onDidDispose = this._onDidDispose.event;
         const role = this._options.accessibilityProvider && this._options.accessibilityProvider.getWidgetRole ? (_a = this._options.accessibilityProvider) === null || _a === void 0 ? void 0 : _a.getWidgetRole() : 'list';
         this.selection = new SelectionTrait(role !== 'listbox');
-        this.focus = new Trait('focused');
         mixin(_options, defaultStyles, false);
         const baseRenderers = [this.focus.renderer, this.selection.renderer];
         this.accessibilityProvider = _options.accessibilityProvider;
@@ -868,24 +948,24 @@ export class List {
             this.styleController = _options.styleController(this.view.domId);
         }
         else {
-            const styleElement = DOM.createStyleSheet(this.view.domNode);
+            const styleElement = createStyleSheet(this.view.domNode);
             this.styleController = new DefaultStyleController(styleElement, this.view.domId);
         }
         this.spliceable = new CombinedSpliceable([
             new TraitSpliceable(this.focus, this.view, _options.identityProvider),
             new TraitSpliceable(this.selection, this.view, _options.identityProvider),
+            new TraitSpliceable(this.anchor, this.view, _options.identityProvider),
             this.view
         ]);
         this.disposables.add(this.focus);
         this.disposables.add(this.selection);
+        this.disposables.add(this.anchor);
         this.disposables.add(this.view);
         this.disposables.add(this._onDidDispose);
-        this.onDidFocus = Event.map(domEvent(this.view.domNode, 'focus', true), () => null);
-        this.onDidBlur = Event.map(domEvent(this.view.domNode, 'blur', true), () => null);
         this.disposables.add(new DOMFocusController(this, this.view));
         if (typeof _options.keyboardSupport !== 'boolean' || _options.keyboardSupport) {
-            const controller = new KeyboardController(this, this.view, _options);
-            this.disposables.add(controller);
+            this.keyboardController = new KeyboardController(this, this.view, _options);
+            this.disposables.add(this.keyboardController);
         }
         if (_options.keyboardNavigationLabelProvider) {
             const delegate = _options.keyboardNavigationDelegate || DefaultKeyboardNavigationDelegate;
@@ -899,7 +979,7 @@ export class List {
         if (this.accessibilityProvider) {
             this.ariaLabel = this.accessibilityProvider.getWidgetAriaLabel();
         }
-        if (_options.multipleSelectionSupport) {
+        if (this._options.multipleSelectionSupport !== false) {
             this.view.domNode.setAttribute('aria-multiselectable', 'true');
         }
     }
@@ -917,41 +997,61 @@ export class List {
     get onMouseDown() { return this.view.onMouseDown; }
     get onTouchStart() { return this.view.onTouchStart; }
     get onTap() { return this.view.onTap; }
+    /**
+     * Possible context menu trigger events:
+     * - ContextMenu key
+     * - Shift F10
+     * - Ctrl Option Shift M (macOS with VoiceOver)
+     * - Mouse right click
+     */
     get onContextMenu() {
-        const fromKeydown = Event.chain(domEvent(this.view.domNode, 'keydown'))
+        let didJustPressContextMenuKey = false;
+        const fromKeyDown = Event.chain(this.disposables.add(new DomEmitter(this.view.domNode, 'keydown')).event)
             .map(e => new StandardKeyboardEvent(e))
-            .filter(e => this.didJustPressContextMenuKey = e.keyCode === 58 /* ContextMenu */ || (e.shiftKey && e.keyCode === 68 /* F10 */))
-            .filter(e => { e.preventDefault(); e.stopPropagation(); return false; })
+            .filter(e => didJustPressContextMenuKey = e.keyCode === 58 /* ContextMenu */ || (e.shiftKey && e.keyCode === 68 /* F10 */))
+            .map(stopEvent)
+            .filter(() => false)
             .event;
-        const fromKeyup = Event.chain(domEvent(this.view.domNode, 'keyup'))
-            .filter(() => {
-            const didJustPressContextMenuKey = this.didJustPressContextMenuKey;
-            this.didJustPressContextMenuKey = false;
-            return didJustPressContextMenuKey;
-        })
-            .filter(() => this.getFocus().length > 0 && !!this.view.domElement(this.getFocus()[0]))
-            .map(browserEvent => {
-            const index = this.getFocus()[0];
-            const element = this.view.element(index);
-            const anchor = this.view.domElement(index);
+        const fromKeyUp = Event.chain(this.disposables.add(new DomEmitter(this.view.domNode, 'keyup')).event)
+            .forEach(() => didJustPressContextMenuKey = false)
+            .map(e => new StandardKeyboardEvent(e))
+            .filter(e => e.keyCode === 58 /* ContextMenu */ || (e.shiftKey && e.keyCode === 68 /* F10 */))
+            .map(stopEvent)
+            .map(({ browserEvent }) => {
+            const focus = this.getFocus();
+            const index = focus.length ? focus[0] : undefined;
+            const element = typeof index !== 'undefined' ? this.view.element(index) : undefined;
+            const anchor = typeof index !== 'undefined' ? this.view.domElement(index) : this.view.domNode;
             return { index, element, anchor, browserEvent };
         })
             .event;
         const fromMouse = Event.chain(this.view.onContextMenu)
-            .filter(() => !this.didJustPressContextMenuKey)
-            .map(({ element, index, browserEvent }) => ({ element, index, anchor: { x: browserEvent.clientX + 1, y: browserEvent.clientY }, browserEvent }))
+            .filter(_ => !didJustPressContextMenuKey)
+            .map(({ element, index, browserEvent }) => ({ element, index, anchor: { x: browserEvent.pageX + 1, y: browserEvent.pageY }, browserEvent }))
             .event;
-        return Event.any(fromKeydown, fromKeyup, fromMouse);
+        return Event.any(fromKeyDown, fromKeyUp, fromMouse);
     }
-    get onKeyDown() { return domEvent(this.view.domNode, 'keydown'); }
+    get onKeyDown() { return this.disposables.add(new DomEmitter(this.view.domNode, 'keydown')).event; }
+    get onDidFocus() { return Event.signal(this.disposables.add(new DomEmitter(this.view.domNode, 'focus', true)).event); }
     createMouseController(options) {
         return new MouseController(this);
     }
     updateOptions(optionsUpdate = {}) {
+        var _a;
         this._options = Object.assign(Object.assign({}, this._options), optionsUpdate);
         if (this.typeLabelController) {
             this.typeLabelController.updateOptions(this._options);
         }
+        if (this._options.multipleSelectionController !== undefined) {
+            if (this._options.multipleSelectionSupport) {
+                this.view.domNode.setAttribute('aria-multiselectable', 'true');
+            }
+            else {
+                this.view.domNode.removeAttribute('aria-multiselectable');
+            }
+        }
+        this.mouseController.updateOptions(optionsUpdate);
+        (_a = this.keyboardController) === null || _a === void 0 ? void 0 : _a.updateOptions(optionsUpdate);
         this.view.updateOptions(optionsUpdate);
     }
     get options() {
@@ -995,7 +1095,7 @@ export class List {
         this.view.domNode.setAttribute('aria-label', value);
     }
     domFocus() {
-        this.view.domNode.focus();
+        this.view.domNode.focus({ preventScroll: true });
     }
     layout(height, width) {
         this.view.layout(height, width);
@@ -1013,6 +1113,23 @@ export class List {
     }
     getSelectedElements() {
         return this.getSelection().map(i => this.view.element(i));
+    }
+    setAnchor(index) {
+        if (typeof index === 'undefined') {
+            this.anchor.set([]);
+            return;
+        }
+        if (index < 0 || index >= this.length) {
+            throw new ListError(this.user, `Invalid index ${index}`);
+        }
+        this.anchor.set([index]);
+    }
+    getAnchor() {
+        return firstOrDefault(this.anchor.get(), undefined);
+    }
+    getAnchorElement() {
+        const anchor = this.getAnchor();
+        return typeof anchor === 'undefined' ? undefined : this.element(anchor);
     }
     setFocus(indexes, browserEvent) {
         for (const index of indexes) {
@@ -1043,56 +1160,64 @@ export class List {
         }
     }
     focusNextPage(browserEvent, filter) {
-        let lastPageIndex = this.view.indexAt(this.view.getScrollTop() + this.view.renderHeight);
-        lastPageIndex = lastPageIndex === 0 ? 0 : lastPageIndex - 1;
-        const lastPageElement = this.view.element(lastPageIndex);
-        const currentlyFocusedElement = this.getFocusedElements()[0];
-        if (currentlyFocusedElement !== lastPageElement) {
-            const lastGoodPageIndex = this.findPreviousIndex(lastPageIndex, false, filter);
-            if (lastGoodPageIndex > -1 && currentlyFocusedElement !== this.view.element(lastGoodPageIndex)) {
-                this.setFocus([lastGoodPageIndex], browserEvent);
+        return __awaiter(this, void 0, void 0, function* () {
+            let lastPageIndex = this.view.indexAt(this.view.getScrollTop() + this.view.renderHeight);
+            lastPageIndex = lastPageIndex === 0 ? 0 : lastPageIndex - 1;
+            const lastPageElement = this.view.element(lastPageIndex);
+            const currentlyFocusedElement = this.getFocusedElements()[0];
+            if (currentlyFocusedElement !== lastPageElement) {
+                const lastGoodPageIndex = this.findPreviousIndex(lastPageIndex, false, filter);
+                if (lastGoodPageIndex > -1 && currentlyFocusedElement !== this.view.element(lastGoodPageIndex)) {
+                    this.setFocus([lastGoodPageIndex], browserEvent);
+                }
+                else {
+                    this.setFocus([lastPageIndex], browserEvent);
+                }
             }
             else {
-                this.setFocus([lastPageIndex], browserEvent);
+                const previousScrollTop = this.view.getScrollTop();
+                this.view.setScrollTop(previousScrollTop + this.view.renderHeight - this.view.elementHeight(lastPageIndex));
+                if (this.view.getScrollTop() !== previousScrollTop) {
+                    this.setFocus([]);
+                    // Let the scroll event listener run
+                    yield timeout(0);
+                    yield this.focusNextPage(browserEvent, filter);
+                }
             }
-        }
-        else {
-            const previousScrollTop = this.view.getScrollTop();
-            this.view.setScrollTop(previousScrollTop + this.view.renderHeight - this.view.elementHeight(lastPageIndex));
-            if (this.view.getScrollTop() !== previousScrollTop) {
-                // Let the scroll event listener run
-                setTimeout(() => this.focusNextPage(browserEvent, filter), 0);
-            }
-        }
+        });
     }
     focusPreviousPage(browserEvent, filter) {
-        let firstPageIndex;
-        const scrollTop = this.view.getScrollTop();
-        if (scrollTop === 0) {
-            firstPageIndex = this.view.indexAt(scrollTop);
-        }
-        else {
-            firstPageIndex = this.view.indexAfter(scrollTop - 1);
-        }
-        const firstPageElement = this.view.element(firstPageIndex);
-        const currentlyFocusedElement = this.getFocusedElements()[0];
-        if (currentlyFocusedElement !== firstPageElement) {
-            const firstGoodPageIndex = this.findNextIndex(firstPageIndex, false, filter);
-            if (firstGoodPageIndex > -1 && currentlyFocusedElement !== this.view.element(firstGoodPageIndex)) {
-                this.setFocus([firstGoodPageIndex], browserEvent);
+        return __awaiter(this, void 0, void 0, function* () {
+            let firstPageIndex;
+            const scrollTop = this.view.getScrollTop();
+            if (scrollTop === 0) {
+                firstPageIndex = this.view.indexAt(scrollTop);
             }
             else {
-                this.setFocus([firstPageIndex], browserEvent);
+                firstPageIndex = this.view.indexAfter(scrollTop - 1);
             }
-        }
-        else {
-            const previousScrollTop = scrollTop;
-            this.view.setScrollTop(scrollTop - this.view.renderHeight);
-            if (this.view.getScrollTop() !== previousScrollTop) {
-                // Let the scroll event listener run
-                setTimeout(() => this.focusPreviousPage(browserEvent, filter), 0);
+            const firstPageElement = this.view.element(firstPageIndex);
+            const currentlyFocusedElement = this.getFocusedElements()[0];
+            if (currentlyFocusedElement !== firstPageElement) {
+                const firstGoodPageIndex = this.findNextIndex(firstPageIndex, false, filter);
+                if (firstGoodPageIndex > -1 && currentlyFocusedElement !== this.view.element(firstGoodPageIndex)) {
+                    this.setFocus([firstGoodPageIndex], browserEvent);
+                }
+                else {
+                    this.setFocus([firstPageIndex], browserEvent);
+                }
             }
-        }
+            else {
+                const previousScrollTop = scrollTop;
+                this.view.setScrollTop(scrollTop - this.view.renderHeight);
+                if (this.view.getScrollTop() !== previousScrollTop) {
+                    this.setFocus([]);
+                    // Let the scroll event listener run
+                    yield timeout(0);
+                    yield this.focusPreviousPage(browserEvent, filter);
+                }
+            }
+        });
     }
     focusLast(browserEvent, filter) {
         if (this.length === 0) {
@@ -1161,14 +1286,14 @@ export class List {
         }
         else {
             const viewItemBottom = elementTop + elementHeight;
-            const wrapperBottom = scrollTop + this.view.renderHeight;
-            if (elementTop < scrollTop && viewItemBottom >= wrapperBottom) {
+            const scrollBottom = scrollTop + this.view.renderHeight;
+            if (elementTop < scrollTop && viewItemBottom >= scrollBottom) {
                 // The element is already overflowing the viewport, no-op
             }
-            else if (elementTop < scrollTop) {
+            else if (elementTop < scrollTop || (viewItemBottom >= scrollBottom && elementHeight >= this.view.renderHeight)) {
                 this.view.setScrollTop(elementTop);
             }
-            else if (viewItemBottom >= wrapperBottom) {
+            else if (viewItemBottom >= scrollBottom) {
                 this.view.setScrollTop(viewItemBottom - this.view.renderHeight);
             }
         }
@@ -1202,7 +1327,7 @@ export class List {
     }
     _onFocusChange() {
         const focus = this.focus.get();
-        DOM.toggleClass(this.view.domNode, 'element-focused', focus.length > 0);
+        this.view.domNode.classList.toggle('element-focused', focus.length > 0);
         this.onDidChangeActiveDescendant();
     }
     onDidChangeActiveDescendant() {
@@ -1221,9 +1346,9 @@ export class List {
     }
     _onSelectionChange() {
         const selection = this.selection.get();
-        DOM.toggleClass(this.view.domNode, 'selection-none', selection.length === 0);
-        DOM.toggleClass(this.view.domNode, 'selection-single', selection.length === 1);
-        DOM.toggleClass(this.view.domNode, 'selection-multiple', selection.length > 1);
+        this.view.domNode.classList.toggle('selection-none', selection.length === 0);
+        this.view.domNode.classList.toggle('selection-single', selection.length === 1);
+        this.view.domNode.classList.toggle('selection-multiple', selection.length > 1);
     }
     dispose() {
         this._onDidDispose.fire();
@@ -1240,3 +1365,9 @@ __decorate([
 __decorate([
     memoize
 ], List.prototype, "onContextMenu", null);
+__decorate([
+    memoize
+], List.prototype, "onKeyDown", null);
+__decorate([
+    memoize
+], List.prototype, "onDidFocus", null);

@@ -11,15 +11,15 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __param = (this && this.__param) || function (paramIndex, decorator) {
     return function (target, key) { decorator(target, key, paramIndex); }
 };
-import './renameInputField.css';
 import { DisposableStore } from '../../../base/common/lifecycle.js';
+import './renameInputField.css';
 import { Position } from '../../common/core/position.js';
 import { localize } from '../../../nls.js';
 import { IContextKeyService, RawContextKey } from '../../../platform/contextkey/common/contextkey.js';
-import { inputBackground, inputBorder, inputForeground, widgetShadow, editorWidgetBackground } from '../../../platform/theme/common/colorRegistry.js';
-import { IThemeService } from '../../../platform/theme/common/themeService.js';
 import { IKeybindingService } from '../../../platform/keybinding/common/keybinding.js';
-export const CONTEXT_RENAME_INPUT_VISIBLE = new RawContextKey('renameInputVisible', false);
+import { editorWidgetBackground, inputBackground, inputBorder, inputForeground, widgetShadow } from '../../../platform/theme/common/colorRegistry.js';
+import { IThemeService } from '../../../platform/theme/common/themeService.js';
+export const CONTEXT_RENAME_INPUT_VISIBLE = new RawContextKey('renameInputVisible', false, localize('renameInputVisible', "Whether the rename input widget is visible"));
 let RenameInputField = class RenameInputField {
     constructor(_editor, _acceptKeybindings, _themeService, _keybindingService, contextKeyService) {
         this._editor = _editor;
@@ -31,7 +31,7 @@ let RenameInputField = class RenameInputField {
         this._visibleContextKey = CONTEXT_RENAME_INPUT_VISIBLE.bindTo(contextKeyService);
         this._editor.addContentWidget(this);
         this._disposables.add(this._editor.onDidChangeConfiguration(e => {
-            if (e.hasChanged(36 /* fontInfo */)) {
+            if (e.hasChanged(43 /* fontInfo */)) {
                 this._updateFont();
             }
         }));
@@ -76,7 +76,7 @@ let RenameInputField = class RenameInputField {
         }
         const widgetShadowColor = theme.getColor(widgetShadow);
         this._domNode.style.backgroundColor = String((_a = theme.getColor(editorWidgetBackground)) !== null && _a !== void 0 ? _a : '');
-        this._domNode.style.boxShadow = widgetShadowColor ? ` 0 2px 8px ${widgetShadowColor}` : '';
+        this._domNode.style.boxShadow = widgetShadowColor ? ` 0 0 8px 2px ${widgetShadowColor}` : '';
         this._domNode.style.color = String((_b = theme.getColor(inputForeground)) !== null && _b !== void 0 ? _b : '');
         this._input.style.backgroundColor = String((_c = theme.getColor(inputBackground)) !== null && _c !== void 0 ? _c : '');
         // this._input.style.color = String(theme.getColor(inputForeground) ?? '');
@@ -89,7 +89,7 @@ let RenameInputField = class RenameInputField {
         if (!this._input || !this._label) {
             return;
         }
-        const fontInfo = this._editor.getOption(36 /* fontInfo */);
+        const fontInfo = this._editor.getOption(43 /* fontInfo */);
         this._input.style.fontFamily = fontInfo.fontFamily;
         this._input.style.fontWeight = fontInfo.fontWeight;
         this._input.style.fontSize = `${fontInfo.fontSize}px`;
@@ -103,6 +103,12 @@ let RenameInputField = class RenameInputField {
             position: this._position,
             preference: [2 /* BELOW */, 1 /* ABOVE */]
         };
+    }
+    afterRender(position) {
+        if (!position) {
+            // cancel rename when input widget isn't rendered anymore
+            this.cancelInput(true);
+        }
     }
     acceptInput(wantsPreview) {
         if (this._currentAcceptInput) {

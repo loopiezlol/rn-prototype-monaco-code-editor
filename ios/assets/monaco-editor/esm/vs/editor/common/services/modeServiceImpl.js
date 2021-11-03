@@ -4,18 +4,23 @@
  *--------------------------------------------------------------------------------------------*/
 import { Emitter } from '../../../base/common/event.js';
 import { Disposable } from '../../../base/common/lifecycle.js';
-import { FrankensteinMode } from '../modes/abstractMode.js';
 import { NULL_LANGUAGE_IDENTIFIER } from '../modes/nullMode.js';
 import { LanguagesRegistry } from './languagesRegistry.js';
 import { firstOrDefault } from '../../../base/common/arrays.js';
-class LanguageSelection extends Disposable {
+class LanguageSelection {
     constructor(onLanguagesMaybeChanged, selector) {
-        super();
-        this._onDidChange = this._register(new Emitter());
-        this.onDidChange = this._onDidChange.event;
         this._selector = selector;
         this.languageIdentifier = this._selector();
-        this._register(onLanguagesMaybeChanged(() => this._evaluate()));
+        let listener;
+        this._onDidChange = new Emitter({
+            onFirstListenerAdd: () => {
+                listener = onLanguagesMaybeChanged(() => this._evaluate());
+            },
+            onLastListenerRemove: () => {
+                listener.dispose();
+            }
+        });
+        this.onDidChange = this._onDidChange.event;
     }
     _evaluate() {
         let languageIdentifier = this._selector();
@@ -27,15 +32,16 @@ class LanguageSelection extends Disposable {
         this._onDidChange.fire(this.languageIdentifier);
     }
 }
-export class ModeServiceImpl {
+export class ModeServiceImpl extends Disposable {
     constructor(warnOnOverwrite = false) {
-        this._onDidCreateMode = new Emitter();
-        this.onDidCreateMode = this._onDidCreateMode.event;
-        this._onLanguagesMaybeChanged = new Emitter();
+        super();
+        this._onDidEncounterLanguage = this._register(new Emitter());
+        this.onDidEncounterLanguage = this._onDidEncounterLanguage.event;
+        this._onLanguagesMaybeChanged = this._register(new Emitter({ leakWarningThreshold: 200 /* https://github.com/microsoft/vscode/issues/119968 */ }));
         this.onLanguagesMaybeChanged = this._onLanguagesMaybeChanged.event;
-        this._instantiatedModes = {};
-        this._registry = new LanguagesRegistry(true, warnOnOverwrite);
-        this._registry.onDidChange(() => this._onLanguagesMaybeChanged.fire());
+        this._encounteredLanguages = new Set();
+        this._registry = this._register(new LanguagesRegistry(true, warnOnOverwrite));
+        this._register(this._registry.onDidChange(() => this._onLanguagesMaybeChanged.fire()));
     }
     isRegisteredMode(mimetypeOrModeId) {
         return this._registry.isRegisteredMode(mimetypeOrModeId);
@@ -79,11 +85,10 @@ export class ModeServiceImpl {
         this._getOrCreateMode(modeId || 'plaintext');
     }
     _getOrCreateMode(modeId) {
-        if (!this._instantiatedModes.hasOwnProperty(modeId)) {
-            let languageIdentifier = this.getLanguageIdentifier(modeId) || NULL_LANGUAGE_IDENTIFIER;
-            this._instantiatedModes[modeId] = new FrankensteinMode(languageIdentifier);
-            this._onDidCreateMode.fire(this._instantiatedModes[modeId]);
+        if (!this._encounteredLanguages.has(modeId)) {
+            this._encounteredLanguages.add(modeId);
+            const languageIdentifier = this.getLanguageIdentifier(modeId) || NULL_LANGUAGE_IDENTIFIER;
+            this._onDidEncounterLanguage.fire(languageIdentifier);
         }
-        return this._instantiatedModes[modeId];
     }
 }

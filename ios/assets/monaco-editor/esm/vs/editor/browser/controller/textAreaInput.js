@@ -7,12 +7,16 @@ import * as dom from '../../../base/browser/dom.js';
 import { RunOnceScheduler } from '../../../base/common/async.js';
 import { Emitter } from '../../../base/common/event.js';
 import { Disposable } from '../../../base/common/lifecycle.js';
+import { Mimes } from '../../../base/common/mime.js';
 import * as platform from '../../../base/common/platform.js';
 import * as strings from '../../../base/common/strings.js';
-import { TextAreaState } from './textAreaState.js';
+import { TextAreaState, _debugComposition } from './textAreaState.js';
 import { Position } from '../../common/core/position.js';
 import { Selection } from '../../common/core/selection.js';
-import { BrowserFeatures } from '../../../base/browser/canIUse.js';
+export var TextAreaSyntethicEvents;
+(function (TextAreaSyntethicEvents) {
+    TextAreaSyntethicEvents.Tap = '-monaco-textarea-synthetic-tap';
+})(TextAreaSyntethicEvents || (TextAreaSyntethicEvents = {}));
 export const CopyOptions = {
     forceCopyWithSyntaxHighlighting: false
 };
@@ -75,6 +79,7 @@ export class TextAreaInput extends Disposable {
         this._host = host;
         this._textArea = this._register(new TextAreaWrapper(textArea));
         this._asyncTriggerCut = this._register(new RunOnceScheduler(() => this._onCut.fire(), 0));
+        this._asyncFocusGainWriteScreenReaderContent = this._register(new RunOnceScheduler(() => this.writeScreenReaderContent('asyncFocusGain'), 0));
         this._textAreaState = TextAreaState.EMPTY;
         this._selectionChangeListener = null;
         this.writeScreenReaderContent('ctor');
@@ -100,30 +105,38 @@ export class TextAreaInput extends Disposable {
             this._onKeyUp.fire(e);
         }));
         this._register(dom.addDisposableListener(textArea.domNode, 'compositionstart', (e) => {
+            if (_debugComposition) {
+                console.log(`[compositionstart]`, e);
+            }
             if (this._isDoingComposition) {
                 return;
             }
             this._isDoingComposition = true;
-            let moveOneCharacterLeft = false;
             if (platform.isMacintosh
-                && lastKeyDown
-                && lastKeyDown.equals(109 /* KEY_IN_COMPOSITION */)
                 && this._textAreaState.selectionStart === this._textAreaState.selectionEnd
                 && this._textAreaState.selectionStart > 0
                 && this._textAreaState.value.substr(this._textAreaState.selectionStart - 1, 1) === e.data) {
-                // Handling long press case on macOS + arrow key => pretend the character was selected
-                if (lastKeyDown.code === 'ArrowRight' || lastKeyDown.code === 'ArrowLeft') {
-                    moveOneCharacterLeft = true;
+                const isArrowKey = (lastKeyDown && lastKeyDown.equals(109 /* KEY_IN_COMPOSITION */)
+                    && (lastKeyDown.code === 'ArrowRight' || lastKeyDown.code === 'ArrowLeft'));
+                if (isArrowKey || browser.isFirefox) {
+                    // Handling long press case on Chromium/Safari macOS + arrow key => pretend the character was selected
+                    // or long press case on Firefox on macOS
+                    if (_debugComposition) {
+                        console.log(`[compositionstart] Handling long press case on macOS + arrow key or Firefox`, e);
+                    }
+                    this._textAreaState = new TextAreaState(this._textAreaState.value, this._textAreaState.selectionStart - 1, this._textAreaState.selectionEnd, this._textAreaState.selectionStartPosition ? new Position(this._textAreaState.selectionStartPosition.lineNumber, this._textAreaState.selectionStartPosition.column - 1) : null, this._textAreaState.selectionEndPosition);
+                    this._onCompositionStart.fire({ revealDeltaColumns: -1 });
+                    return;
                 }
             }
-            if (moveOneCharacterLeft) {
-                this._textAreaState = new TextAreaState(this._textAreaState.value, this._textAreaState.selectionStart - 1, this._textAreaState.selectionEnd, this._textAreaState.selectionStartPosition ? new Position(this._textAreaState.selectionStartPosition.lineNumber, this._textAreaState.selectionStartPosition.column - 1) : null, this._textAreaState.selectionEndPosition);
+            if (browser.isAndroid) {
+                // when tapping on the editor, Android enters composition mode to edit the current word
+                // so we cannot clear the textarea on Android and we must pretend the current word was selected
+                this._onCompositionStart.fire({ revealDeltaColumns: -this._textAreaState.selectionStart });
+                return;
             }
-            else if (!browser.isEdge) {
-                // In IE we cannot set .value when handling 'compositionstart' because the entire composition will get canceled.
-                this._setAndWriteTextAreaState('compositionstart', TextAreaState.EMPTY);
-            }
-            this._onCompositionStart.fire({ moveOneCharacterLeft });
+            this._setAndWriteTextAreaState('compositionstart', TextAreaState.EMPTY);
+            this._onCompositionStart.fire({ revealDeltaColumns: 0 });
         }));
         /**
          * Deduce the typed input from a text area's value and the last observed state.
@@ -133,6 +146,11 @@ export class TextAreaInput extends Disposable {
             const newState = TextAreaState.readFromTextArea(this._textArea);
             return [newState, TextAreaState.deduceInput(oldState, newState, couldBeEmojiInput)];
         };
+        const deduceAndroidCompositionInput = () => {
+            const oldState = this._textAreaState;
+            const newState = TextAreaState.readFromTextArea(this._textArea);
+            return [newState, TextAreaState.deduceAndroidCompositionInput(oldState, newState)];
+        };
         /**
          * Deduce the composition input from a string.
          */
@@ -141,23 +159,22 @@ export class TextAreaInput extends Disposable {
             const newState = TextAreaState.selectedText(text);
             const typeInput = {
                 text: newState.value,
-                replaceCharCnt: oldState.selectionEnd - oldState.selectionStart
+                replacePrevCharCnt: oldState.selectionEnd - oldState.selectionStart,
+                replaceNextCharCnt: 0,
+                positionDelta: 0
             };
             return [newState, typeInput];
         };
-        const compositionDataInValid = (locale) => {
-            // https://github.com/Microsoft/monaco-editor/issues/339
-            // Multi-part Japanese compositions reset cursor in Edge/IE, Chinese and Korean IME don't have this issue.
-            // The reason that we can't use this path for all CJK IME is IE and Edge behave differently when handling Korean IME,
-            // which breaks this path of code.
-            if (browser.isEdge && locale === 'ja') {
-                return true;
-            }
-            return false;
-        };
         this._register(dom.addDisposableListener(textArea.domNode, 'compositionupdate', (e) => {
-            if (compositionDataInValid(e.locale)) {
-                const [newState, typeInput] = deduceInputFromTextAreaValue(/*couldBeEmojiInput*/ false);
+            if (_debugComposition) {
+                console.log(`[compositionupdate]`, e);
+            }
+            if (browser.isAndroid) {
+                // On Android, the data sent with the composition update event is unusable.
+                // For example, if the cursor is in the middle of a word like Mic|osoft
+                // and Microsoft is chosen from the keyboard's suggestions, the e.data will contain "Microsoft".
+                // This is not really usable because it doesn't tell us where the edit began and where it ended.
+                const [newState, typeInput] = deduceAndroidCompositionInput();
                 this._textAreaState = newState;
                 this._onType.fire(typeInput);
                 this._onCompositionUpdate.fire(e);
@@ -169,31 +186,35 @@ export class TextAreaInput extends Disposable {
             this._onCompositionUpdate.fire(e);
         }));
         this._register(dom.addDisposableListener(textArea.domNode, 'compositionend', (e) => {
+            if (_debugComposition) {
+                console.log(`[compositionend]`, e);
+            }
             // https://github.com/microsoft/monaco-editor/issues/1663
             // On iOS 13.2, Chinese system IME randomly trigger an additional compositionend event with empty data
             if (!this._isDoingComposition) {
                 return;
             }
-            if (compositionDataInValid(e.locale)) {
-                // https://github.com/Microsoft/monaco-editor/issues/339
-                const [newState, typeInput] = deduceInputFromTextAreaValue(/*couldBeEmojiInput*/ false);
+            this._isDoingComposition = false;
+            if (browser.isAndroid) {
+                // On Android, the data sent with the composition update event is unusable.
+                // For example, if the cursor is in the middle of a word like Mic|osoft
+                // and Microsoft is chosen from the keyboard's suggestions, the e.data will contain "Microsoft".
+                // This is not really usable because it doesn't tell us where the edit began and where it ended.
+                const [newState, typeInput] = deduceAndroidCompositionInput();
                 this._textAreaState = newState;
                 this._onType.fire(typeInput);
-            }
-            else {
-                const [newState, typeInput] = deduceComposition(e.data || '');
-                this._textAreaState = newState;
-                this._onType.fire(typeInput);
-            }
-            // Due to isEdgeOrIE (where the textarea was not cleared initially) and isChrome (the textarea is not updated correctly when composition ends)
-            // we cannot assume the text at the end consists only of the composited text
-            if (browser.isEdge || browser.isChrome) {
-                this._textAreaState = TextAreaState.readFromTextArea(this._textArea);
-            }
-            if (!this._isDoingComposition) {
+                this._onCompositionEnd.fire();
                 return;
             }
-            this._isDoingComposition = false;
+            const [newState, typeInput] = deduceComposition(e.data || '');
+            this._textAreaState = newState;
+            this._onType.fire(typeInput);
+            // isChrome: the textarea is not updated correctly when composition ends
+            // isFirefox: the textarea is not updated correctly after inserting emojis
+            // => we cannot assume the text at the end consists only of the composited text
+            if (browser.isChrome || browser.isFirefox) {
+                this._textAreaState = TextAreaState.readFromTextArea(this._textArea);
+            }
             this._onCompositionEnd.fire();
         }));
         this._register(dom.addDisposableListener(textArea.domNode, 'input', () => {
@@ -204,18 +225,18 @@ export class TextAreaInput extends Disposable {
                 return;
             }
             const [newState, typeInput] = deduceInputFromTextAreaValue(/*couldBeEmojiInput*/ platform.isMacintosh);
-            if (typeInput.replaceCharCnt === 0 && typeInput.text.length === 1 && strings.isHighSurrogate(typeInput.text.charCodeAt(0))) {
+            if (typeInput.replacePrevCharCnt === 0 && typeInput.text.length === 1 && strings.isHighSurrogate(typeInput.text.charCodeAt(0))) {
                 // Ignore invalid input but keep it around for next time
                 return;
             }
             this._textAreaState = newState;
             if (this._nextCommand === 0 /* Type */) {
-                if (typeInput.text !== '') {
+                if (typeInput.text !== '' || typeInput.replacePrevCharCnt !== 0) {
                     this._onType.fire(typeInput);
                 }
             }
             else {
-                if (typeInput.text !== '' || typeInput.replaceCharCnt !== 0) {
+                if (typeInput.text !== '' || typeInput.replacePrevCharCnt !== 0) {
                     this._firePaste(typeInput.text, null);
                 }
                 this._nextCommand = 0 /* Type */;
@@ -251,14 +272,43 @@ export class TextAreaInput extends Disposable {
             }
         }));
         this._register(dom.addDisposableListener(textArea.domNode, 'focus', () => {
+            const hadFocus = this._hasFocus;
             this._setHasFocus(true);
+            if (browser.isSafari && !hadFocus && this._hasFocus) {
+                // When "tabbing into" the textarea, immediately after dispatching the 'focus' event,
+                // Safari will always move the selection at offset 0 in the textarea
+                this._asyncFocusGainWriteScreenReaderContent.schedule();
+            }
         }));
         this._register(dom.addDisposableListener(textArea.domNode, 'blur', () => {
+            if (this._isDoingComposition) {
+                // See https://github.com/microsoft/vscode/issues/112621
+                // where compositionend is not triggered when the editor
+                // is taken off-dom during a composition
+                // Clear the flag to be able to write to the textarea
+                this._isDoingComposition = false;
+                // Clear the textarea to avoid an unwanted cursor type
+                this.writeScreenReaderContent('blurWithoutCompositionEnd');
+                // Fire artificial composition end
+                this._onCompositionEnd.fire();
+            }
             this._setHasFocus(false);
+        }));
+        this._register(dom.addDisposableListener(textArea.domNode, TextAreaSyntethicEvents.Tap, () => {
+            if (browser.isAndroid && this._isDoingComposition) {
+                // on Android, tapping does not cancel the current composition, so the
+                // textarea is stuck showing the old composition
+                // Clear the flag to be able to write to the textarea
+                this._isDoingComposition = false;
+                // Clear the textarea to avoid an unwanted cursor type
+                this.writeScreenReaderContent('tapWithoutCompositionEnd');
+                // Fire artificial composition end
+                this._onCompositionEnd.fire();
+            }
         }));
     }
     _installSelectionChangeListener() {
-        // See https://github.com/Microsoft/vscode/issues/27216 and https://github.com/microsoft/vscode/issues/98256
+        // See https://github.com/microsoft/vscode/issues/27216 and https://github.com/microsoft/vscode/issues/98256
         // When using a Braille display, it is possible for users to reposition the
         // system caret. This is reflected in Chrome as a `selectionchange` event.
         //
@@ -368,14 +418,7 @@ export class TextAreaInput extends Disposable {
             this._selectionChangeListener = this._installSelectionChangeListener();
         }
         if (this._hasFocus) {
-            if (browser.isEdge) {
-                // Edge has a bug where setting the selection range while the focus event
-                // is dispatching doesn't work. To reproduce, "tab into" the editor.
-                this._setAndWriteTextAreaState('focusgain', TextAreaState.EMPTY);
-            }
-            else {
-                this.writeScreenReaderContent('focusgain');
-            }
+            this.writeScreenReaderContent('focusgain');
         }
         if (this._hasFocus) {
             this._onFocus.fire();
@@ -399,7 +442,7 @@ export class TextAreaInput extends Disposable {
         this._setAndWriteTextAreaState(reason, this._host.getScreenReaderContent(this._textAreaState));
     }
     _ensureClipboardGetsEditorSelection(e) {
-        const dataToCopy = this._host.getDataToCopy(ClipboardEventUtils.canUseTextData(e) && BrowserFeatures.clipboard.richText);
+        const dataToCopy = this._host.getDataToCopy(ClipboardEventUtils.canUseTextData(e));
         const storedMetadata = {
             version: 1,
             isFromEmptySelection: dataToCopy.isFromEmptySelection,
@@ -434,15 +477,12 @@ class ClipboardEventUtils {
         if (e.clipboardData) {
             return true;
         }
-        if (window.clipboardData) {
-            return true;
-        }
         return false;
     }
     static getTextData(e) {
         if (e.clipboardData) {
             e.preventDefault();
-            const text = e.clipboardData.getData('text/plain');
+            const text = e.clipboardData.getData(Mimes.text);
             let metadata = null;
             const rawmetadata = e.clipboardData.getData('vscode-editor-data');
             if (typeof rawmetadata === 'string') {
@@ -458,25 +498,15 @@ class ClipboardEventUtils {
             }
             return [text, metadata];
         }
-        if (window.clipboardData) {
-            e.preventDefault();
-            const text = window.clipboardData.getData('Text');
-            return [text, null];
-        }
         throw new Error('ClipboardEventUtils.getTextData: Cannot use text data!');
     }
     static setTextData(e, text, html, metadata) {
         if (e.clipboardData) {
-            e.clipboardData.setData('text/plain', text);
+            e.clipboardData.setData(Mimes.text, text);
             if (typeof html === 'string') {
                 e.clipboardData.setData('text/html', html);
             }
             e.clipboardData.setData('vscode-editor-data', JSON.stringify(metadata));
-            e.preventDefault();
-            return;
-        }
-        if (window.clipboardData) {
-            window.clipboardData.setData('Text', text);
             e.preventDefault();
             return;
         }
@@ -513,10 +543,10 @@ class TextAreaWrapper extends Disposable {
         textArea.value = value;
     }
     getSelectionStart() {
-        return this._actual.domNode.selectionStart;
+        return this._actual.domNode.selectionDirection === 'backward' ? this._actual.domNode.selectionEnd : this._actual.domNode.selectionStart;
     }
     getSelectionEnd() {
-        return this._actual.domNode.selectionEnd;
+        return this._actual.domNode.selectionDirection === 'backward' ? this._actual.domNode.selectionStart : this._actual.domNode.selectionEnd;
     }
     setSelectionRange(reason, selectionStart, selectionEnd) {
         const textArea = this._actual.domNode;
@@ -533,7 +563,7 @@ class TextAreaWrapper extends Disposable {
         const currentSelectionEnd = textArea.selectionEnd;
         if (currentIsFocused && currentSelectionStart === selectionStart && currentSelectionEnd === selectionEnd) {
             // No change
-            // Firefox iframe bug https://github.com/Microsoft/monaco-editor/issues/643#issuecomment-367871377
+            // Firefox iframe bug https://github.com/microsoft/monaco-editor/issues/643#issuecomment-367871377
             if (browser.isFirefox && window.parent !== window) {
                 textArea.focus();
             }

@@ -38,11 +38,10 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         if (op[0] & 5) throw op[1]; return { value: op[0] ? op[1] : void 0, done: true };
     }
 };
-import { Position, CompletionItemKind, Range, TextEdit, InsertTextFormat, MarkupKind } from '../_deps/vscode-languageserver-types/main.js';
 import { createScanner } from '../parser/htmlScanner.js';
-import { ScannerState, TokenType } from '../htmlLanguageTypes.js';
+import { ScannerState, TokenType, Position, CompletionItemKind, Range, TextEdit, InsertTextFormat, MarkupKind } from '../htmlLanguageTypes.js';
 import { entities } from '../parser/htmlEntities.js';
-import * as nls from '../../../fillers/vscode-nls.js';
+import * as nls from './../../../fillers/vscode-nls.js';
 import { isLetterOrDigit, endsWith, startsWith } from '../utils/strings.js';
 import { isVoidElement } from '../languageFacts/fact.js';
 import { isDefined } from '../utils/object.js';
@@ -124,7 +123,7 @@ var HTMLCompletion = /** @class */ (function () {
                     result.items.push({
                         label: tag.name,
                         kind: CompletionItemKind.Property,
-                        documentation: generateDocumentation(tag, doesSupportMarkdown),
+                        documentation: generateDocumentation(tag, undefined, doesSupportMarkdown),
                         textEdit: TextEdit.replace(range, tag.name),
                         insertTextFormat: InsertTextFormat.PlainText
                     });
@@ -184,9 +183,9 @@ var HTMLCompletion = /** @class */ (function () {
                     result.items.push({
                         label: '/' + tag.name,
                         kind: CompletionItemKind.Property,
-                        documentation: generateDocumentation(tag, doesSupportMarkdown),
-                        filterText: '/' + tag + closeTag,
-                        textEdit: TextEdit.replace(range, '/' + tag + closeTag),
+                        documentation: generateDocumentation(tag, undefined, doesSupportMarkdown),
+                        filterText: '/' + tag.name + closeTag,
+                        textEdit: TextEdit.replace(range, '/' + tag.name + closeTag),
                         insertTextFormat: InsertTextFormat.PlainText
                     });
                 });
@@ -214,15 +213,25 @@ var HTMLCompletion = /** @class */ (function () {
             collectCloseTagSuggestions(tagStart, true, tagEnd);
             return result;
         }
+        function getExistingAttributes() {
+            var existingAttributes = Object.create(null);
+            node.attributeNames.forEach(function (attribute) {
+                existingAttributes[attribute] = true;
+            });
+            return existingAttributes;
+        }
         function collectAttributeNameSuggestions(nameStart, nameEnd) {
             if (nameEnd === void 0) { nameEnd = offset; }
             var replaceEnd = offset;
             while (replaceEnd < nameEnd && text[replaceEnd] !== '<') { // < is a valid attribute name character, but we rather assume the attribute name ends. See #23236.
                 replaceEnd++;
             }
+            var currentAttribute = text.substring(nameStart, nameEnd);
             var range = getReplaceRange(nameStart, replaceEnd);
             var value = isFollowedBy(text, nameEnd, ScannerState.AfterAttributeName, TokenType.DelimiterAssign) ? '' : '="$1"';
-            var seenAttributes = Object.create(null);
+            var seenAttributes = getExistingAttributes();
+            // include current typing attribute
+            seenAttributes[currentAttribute] = false;
             dataProviders.forEach(function (provider) {
                 provider.provideAttributes(currentTag).forEach(function (attr) {
                     if (seenAttributes[attr.name]) {
@@ -243,7 +252,7 @@ var HTMLCompletion = /** @class */ (function () {
                     result.items.push({
                         label: attr.name,
                         kind: attr.valueSet === 'handler' ? CompletionItemKind.Function : CompletionItemKind.Value,
-                        documentation: generateDocumentation(attr, doesSupportMarkdown),
+                        documentation: generateDocumentation(attr, undefined, doesSupportMarkdown),
                         textEdit: TextEdit.replace(range, codeSnippet),
                         insertTextFormat: InsertTextFormat.Snippet,
                         command: command
@@ -317,7 +326,7 @@ var HTMLCompletion = /** @class */ (function () {
                         label: value.name,
                         filterText: insertText,
                         kind: CompletionItemKind.Unit,
-                        documentation: generateDocumentation(value, doesSupportMarkdown),
+                        documentation: generateDocumentation(value, undefined, doesSupportMarkdown),
                         textEdit: TextEdit.replace(range, insertText),
                         insertTextFormat: InsertTextFormat.PlainText
                     });
@@ -498,7 +507,7 @@ var HTMLCompletion = /** @class */ (function () {
         }
         else if (char === '/') {
             var node = htmlDocument.findNodeBefore(offset);
-            while (node && node.closed) {
+            while (node && node.closed && !(node.endTagStart && (node.endTagStart > offset))) {
                 node = node.parent;
             }
             if (node && node.tag) {

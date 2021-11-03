@@ -11,6 +11,7 @@ export class SemanticTokensProviderStyling {
         this._themeService = _themeService;
         this._logService = _logService;
         this._hashTable = new HashTable();
+        this._hasWarnedOverlappingTokens = false;
     }
     getMetadata(tokenTypeIndex, tokenModifierSet, languageId) {
         const entry = this._hashTable.get(tokenTypeIndex, tokenModifierSet, languageId.id);
@@ -78,6 +79,12 @@ export class SemanticTokensProviderStyling {
         }
         return metadata;
     }
+    warnOverlappingSemanticTokens(lineNumber, startColumn) {
+        if (!this._hasWarnedOverlappingTokens) {
+            this._hasWarnedOverlappingTokens = true;
+            console.warn(`Overlapping semantic tokens detected at lineNumber ${lineNumber}, column ${startColumn}`);
+        }
+    }
 }
 export function toMultilineTokens2(tokens, styling, languageId) {
     const srcData = tokens.data;
@@ -111,6 +118,9 @@ export function toMultilineTokens2(tokens, styling, languageId) {
         let destData = new Uint32Array((tokenEndIndex - tokenStartIndex) * 4);
         let destOffset = 0;
         let areaLine = 0;
+        let prevLineNumber = 0;
+        let prevStartCharacter = 0;
+        let prevEndCharacter = 0;
         while (tokenIndex < tokenEndIndex) {
             const srcOffset = 5 * tokenIndex;
             const deltaLine = srcData[srcOffset];
@@ -125,11 +135,25 @@ export function toMultilineTokens2(tokens, styling, languageId) {
                 if (areaLine === 0) {
                     areaLine = lineNumber;
                 }
+                if (prevLineNumber === lineNumber && prevEndCharacter > startCharacter) {
+                    styling.warnOverlappingSemanticTokens(lineNumber, startCharacter + 1);
+                    if (prevStartCharacter < startCharacter) {
+                        // the previous token survives after the overlapping one
+                        destData[destOffset - 4 + 2] = startCharacter;
+                    }
+                    else {
+                        // the previous token is entirely covered by the overlapping one
+                        destOffset -= 4;
+                    }
+                }
                 destData[destOffset] = lineNumber - areaLine;
                 destData[destOffset + 1] = startCharacter;
                 destData[destOffset + 2] = startCharacter + length;
                 destData[destOffset + 3] = metadata;
                 destOffset += 4;
+                prevLineNumber = lineNumber;
+                prevStartCharacter = startCharacter;
+                prevEndCharacter = startCharacter + length;
             }
             lastLineNumber = lineNumber;
             lastStartCharacter = startCharacter;
