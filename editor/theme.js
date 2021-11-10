@@ -1,140 +1,235 @@
 import { EditorView } from "@codemirror/basic-setup";
-import { HighlightStyle, tags as t } from "@codemirror/highlight"
+import { HighlightStyle, tags } from "@codemirror/highlight";
 
-const chalky = "#e5c07b",
-  coral = "#e06c75",
-  cyan = "#56b6c2",
-  invalid = "#ffffff",
-  ivory = "#abb2bf",
-  stone = "#7d8799", // Brightened compared to original to increase contrast
-  malibu = "#61afef",
-  sage = "#98c379",
-  whiskey = "#d19a66",
-  violet = "#c678dd",
-  darkBackground = "#21252b",
-  highlightBackground = "#2c313a",
-  background = "#282c34",
-  selection = "#3E4451",
-  cursor = "#528bff";
+export const lightTheme = EditorView.theme({
+  "&": {
+    fontSize: "12pt",
+  },
+  ".cm-content": {
+    fontFamily: "Source Code Pro",
+  },
+  ".cm-lineWrapping": {
+    wordBreak: "break-all",
+  },
+});
+
+const darkColors = {
+  enki: {
+    background: "#242a36", // enki's dark.cardBackground
+    primary: "#95FFCD", // dark.accent
+    text: "#f8f8f8", // enki text
+    textSecondary: "#f8f8f880",
+  },
+  oneDark: {
+    highlightBackground: "#202530", // dark.codeBackground
+    selection: "#547370", // "#3E4451" combined with the accent color #95FFCD twice
+    selectionMatch: "#aafe661a", // original theme
+    stone: "#7d8799", // from original theme
+    violet: "#c678dd",
+    coral: "#e06c75",
+    cyan: "#56b6c2",
+    malibu: "#61afef",
+    whiskey: "#d19a66",
+    sage: "#98c379",
+    chalky: "#e5c07b",
+    invalid: "#ffffff",
+    ivory: "#abb2bf",
+  },
+};
 
 /// The editor theme styles for One Dark.
-export const theme = EditorView.theme(
+export const darkTheme = EditorView.theme(
   {
     "&": {
-      color: ivory,
-      backgroundColor: background,
+      color: darkColors.oneDark.ivory,
+      backgroundColor: darkColors.enki.background,
       fontSize: "12pt",
     },
-
+    ".cm-lineWrapping": {
+      wordBreak: "break-all",
+    },
     ".cm-content": {
-      caretColor: cursor,
+      caretColor: darkColors.enki.primary,
       fontFamily: "Source Code Pro",
     },
-
-    "&.cm-focused .cm-cursor": { borderLeftColor: cursor },
+    "&.cm-focused .cm-cursor": { borderLeftColor: darkColors.enki.primary },
     "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection":
-      { backgroundColor: selection },
+      { backgroundColor: darkColors.oneDark.selection },
 
-    ".cm-panels": { backgroundColor: darkBackground, color: ivory },
-    ".cm-panels.cm-panels-top": { borderBottom: "2px solid black" },
-    ".cm-panels.cm-panels-bottom": { borderTop: "2px solid black" },
+    // we don't use panels, but this is the working API
+    // https://codemirror.net/6/examples/panel/
+    // ".cm-panels": { backgroundColor: darkBackground, color: ivory },
+    // ".cm-panels.cm-panels-top": { borderBottom: "2px solid black" },
+    // ".cm-panels.cm-panels-bottom": { borderTop: "2px solid black" },
 
-    ".cm-searchMatch": {
-      backgroundColor: "#72a1ff59",
-      outline: "1px solid #457dff",
+    // we don't use searching either
+    // ".cm-searchMatch": {
+    //   backgroundColor: "#72a1ff59",
+    //   outline: "1px solid #457dff",
+    // },
+    // ".cm-searchMatch.cm-searchMatch-selected": {
+    //   backgroundColor: "#6199ff2f",
+    // },
+
+    ".cm-activeLine": {
+      backgroundColor: darkColors.oneDark.highlightBackground,
     },
-    ".cm-searchMatch.cm-searchMatch-selected": {
-      backgroundColor: "#6199ff2f",
+    ".cm-selectionMatch": {
+      backgroundColor: darkColors.oneDark.selectionMatch,
     },
-
-    ".cm-activeLine": { backgroundColor: highlightBackground },
-    ".cm-selectionMatch": { backgroundColor: "#aafe661a" },
 
     "&.cm-focused .cm-matchingBracket, &.cm-focused .cm-nonmatchingBracket": {
-      backgroundColor: "#bad0f847",
-      outline: "1px solid #515a6b",
+      backgroundColor: darkColors.oneDark.selectionMatch,
+      outline: `1px solid ${darkColors.enki.primary}`,
     },
 
     ".cm-gutters": {
-      backgroundColor: background,
-      color: stone,
+      backgroundColor: darkColors.enki.background,
+      color: darkColors.oneDark.stone,
       border: "none",
     },
 
     ".cm-activeLineGutter": {
-      backgroundColor: highlightBackground,
+      backgroundColor: darkColors.oneDark.highlightBackground,
     },
 
-    ".cm-foldPlaceholder": {
-      backgroundColor: "transparent",
-      border: "none",
-      color: "#ddd",
-    },
+    // we don't use folding
+    // ".cm-foldPlaceholder": {
+    //   backgroundColor: "transparent",
+    //   border: "none",
+    //   color: "#ddd",
+    // },
 
+    // autocompletions
     ".cm-tooltip": {
       border: "1px solid #181a1f",
-      backgroundColor: darkBackground,
+      backgroundColor: darkColors.enki.background,
     },
     ".cm-tooltip.cm-tooltip-arrow:before": {
-      borderTopColor: darkBackground,
-      borderBottomColor: darkBackground,
+      borderTopColor: darkColors.enki.background,
+      borderBottomColor: darkColors.enki.background,
     },
     ".cm-tooltip.cm-tooltip-arrow:after": {
-      borderTopColor: "#181a1f",
-      borderBottomColor: "#181a1f",
+      borderTopColor: darkColors.enki.background,
+      borderBottomColor: darkColors.enki.background,
+    },
+    ".cm-tooltip-autocomplete": {
+      "& > ul > li": {
+        color: darkColors.enki.textSecondary,
+      },
     },
     ".cm-tooltip-autocomplete": {
       "& > ul > li[aria-selected]": {
-        backgroundColor: highlightBackground,
-        color: ivory,
+        background: darkColors.oneDark.selectionMatch,
+        color: darkColors.enki.text,
       },
     },
   },
   { dark: true }
 );
 
-// The highlighting style for code in the One Dark theme.
-export const highlighting = HighlightStyle.define([
-  { tag: t.keyword, color: violet },
+export const darkHighlighting = HighlightStyle.define([
+  { tag: tags.keyword, color: darkColors.oneDark.violet },
   {
-    tag: [t.name, t.deleted, t.character, t.propertyName, t.macroName],
-    color: coral,
-  },
-  { tag: [t.function(t.variableName), t.labelName], color: malibu },
-  { tag: [t.color, t.constant(t.name), t.standard(t.name)], color: whiskey },
-  { tag: [t.definition(t.name), t.separator], color: ivory },
+    tag: tags.link,
+    textDecoration: "underline",
+    color: darkColors.oneDark.stone,
+  }, // updated
   {
-    tag: [
-      t.typeName,
-      t.className,
-      t.number,
-      t.changed,
-      t.annotation,
-      t.modifier,
-      t.self,
-      t.namespace,
-    ],
-    color: chalky,
+    tag: tags.heading,
+    textDecoration: "underline",
+    fontWeight: "bold",
+    color: darkColors.oneDark.coral,
   },
+  { tag: tags.emphasis, fontStyle: "italic" },
+  { tag: tags.strong, fontWeight: "bold" },
+  { tag: tags.strikethrough, textDecoration: "line-through" },
+
   {
     tag: [
-      t.operator,
-      t.operatorKeyword,
-      t.url,
-      t.escape,
-      t.regexp,
-      t.link,
-      t.special(t.string),
+      tags.atom,
+      tags.bool,
+      tags.url,
+      tags.contentSeparator,
+      tags.labelName,
     ],
-    color: cyan,
+    color: darkColors.oneDark.cyan,
   },
-  { tag: [t.meta, t.comment], color: stone },
-  { tag: t.strong, fontWeight: "bold" },
-  { tag: t.emphasis, fontStyle: "italic" },
-  { tag: t.strikethrough, textDecoration: "line-through" },
-  { tag: t.link, color: stone, textDecoration: "underline" },
-  { tag: t.heading, fontWeight: "bold", color: coral },
-  { tag: [t.atom, t.bool, t.special(t.variableName)], color: whiskey },
-  { tag: [t.processingInstruction, t.string, t.inserted], color: sage },
-  { tag: t.invalid, color: invalid },
+  { tag: [tags.deleted], color: darkColors.oneDark.coral },
+  {
+    tag: [tags.processingInstruction, tags.string, tags.inserted],
+    color: darkColors.oneDark.sage,
+  },
+  {
+    tag: [tags.regexp, tags.escape, tags.special(tags.string)],
+    color: darkColors.oneDark.cyan,
+  },
+  {
+    tag: tags.definition(tags.variableName),
+    color: darkColors.oneDark.whiskey,
+  },
+  { tag: tags.local(tags.variableName), color: darkColors.oneDark.whiskey },
+
+  { tag: [tags.typeName, tags.namespace], color: darkColors.oneDark.chalky },
+  { tag: tags.className, color: darkColors.oneDark.chalky },
+  {
+    tag: [tags.special(tags.variableName), tags.macroName],
+    color: darkColors.oneDark.whiskey,
+  },
+  { tag: tags.definition(tags.propertyName), color: darkColors.oneDark.coral },
+  { tag: tags.comment, color: darkColors.oneDark.stone },
+  { tag: tags.meta, color: darkColors.oneDark.stone },
+  { tag: tags.invalid, color: darkColors.oneDark.invalid },
+  {
+    tag: [tags.function(tags.variableName), tags.labelName, tags.propertyName],
+    color: darkColors.oneDark.malibu,
+  },
+  {
+    tag: [tags.propertyName],
+    color: darkColors.oneDark.malibu,
+  },
+  // {
+  //   tag: [tags.name], // don't use this. breaks android on mobile when typing x.forEach (javascript)
+  //   color: darkColors.whiskey,
+  // },
+  {
+    tag: [tags.operator],
+    color: darkColors.oneDark.sage,
+  },
 ]);
+
+// original white theme
+export const lightHighlighting = HighlightStyle.define([
+  { tag: tags.link, textDecoration: "underline" },
+  { tag: tags.heading, textDecoration: "underline", fontWeight: "bold" },
+  { tag: tags.emphasis, fontStyle: "italic" },
+  { tag: tags.strong, fontWeight: "bold" },
+  { tag: tags.strikethrough, textDecoration: "line-through" },
+  { tag: tags.keyword, color: "#708" },
+  {
+    tag: [
+      tags.atom,
+      tags.bool,
+      tags.url,
+      tags.contentSeparator,
+      tags.labelName,
+    ],
+    color: "#219",
+  },
+  { tag: [tags.literal, tags.inserted], color: "#164" },
+  { tag: [tags.string, tags.deleted], color: "#a11" },
+  { tag: [tags.regexp, tags.escape, tags.special(tags.string)], color: "#e40" },
+  { tag: tags.definition(tags.variableName), color: "#00f" },
+  { tag: tags.local(tags.variableName), color: "#30a" },
+  { tag: [tags.typeName, tags.namespace], color: "#085" },
+  { tag: tags.className, color: "#167" },
+  { tag: [tags.special(tags.variableName), tags.macroName], color: "#256" },
+  { tag: tags.definition(tags.propertyName), color: "#00c" },
+  { tag: tags.comment, color: "#940" },
+  { tag: tags.meta, color: "#7a757a" },
+  { tag: tags.invalid, color: "#f00" },
+]);
+
+export const darkThemeExtensions = [darkTheme, darkHighlighting];
+
+export const lightThemeExtensions = [lightTheme, lightHighlighting];
