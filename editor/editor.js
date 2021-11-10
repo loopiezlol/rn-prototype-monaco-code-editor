@@ -22,6 +22,7 @@ import {
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
 import { indentOnInput } from "@codemirror/language";
 import { defaultHighlightStyle } from "@codemirror/highlight";
+import { basicSetup } from "@codemirror/basic-setup";
 
 if (!window.ReactNativeWebView) {
   console.log("window.ReactNativeWebView missing, will mock instead");
@@ -41,8 +42,6 @@ console = {
   warn: (log) => consoleLog("warn", log),
   error: (log) => consoleLog("error", log),
 };
-
-console.log("ooooo");
 
 // TODOS:
 // - extracting theme
@@ -122,6 +121,7 @@ export default async function compareWSAGraphAndSequences() {
   process.exit(0);
 }`,
   extensions: [
+    basicSetup,
     EditorView.updateListener.of((v) => {
       const { doc } = v.state;
       if (v.docChanged) {
@@ -146,7 +146,7 @@ export default async function compareWSAGraphAndSequences() {
     keymap.of([
       indentWithTab,
       ...closeBracketsKeymap,
-      ...defaultKeymap,
+      ...defaultKeymap,  // causes ios double enter press
       ...completionKeymap,
     ]),
     languages.of(javascript()),

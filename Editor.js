@@ -69,13 +69,13 @@ function Editor(
 
   React.useEffect(() => {
     const keyboardDidShowListener = Keyboard.addListener(
-      "keyboardDidShow",
+      "keyboardWillShow", // should be keyboardDidShow on android, will show is not supported
       () => {
         setKeyboardVisible(true); // or some other action
       }
     );
     const keyboardDidHideListener = Keyboard.addListener(
-      "keyboardDidHide",
+      "keyboardWillHide",  // should be keyboardDidHide on android, will show is not supported
       () => {
         setKeyboardVisible(false); // or some other action
       }
